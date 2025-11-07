@@ -132,8 +132,7 @@ void launchRegisterOptimizedGEMM(float* A, float* B, float* C, int M, int N, int
 int main()
 {
     const int BLOCK_SIZE = 32;
-    const int SUB_TILE_SIZE = 8;
-    const int NUMS_THREADS_PER_BLOCK = BLOCK_SIZE / SUB_TILE_SIZE;
+    const int SUB_TILE_SIZE = 4;
     const int M = 1024;
     const int K = 256;
     const int N = 512;
@@ -173,7 +172,7 @@ int main()
     cudaMemcpy(d_B, h_B, K * N * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_C, h_C, M * N * sizeof(float), cudaMemcpyHostToDevice);
 
-    launchRegisterOptimizedGEMM<BLOCK_SIZE, NUMS_THREADS_PER_BLOCK>(d_A, d_B, d_C, M, N, K);
+    launchRegisterOptimizedGEMM<BLOCK_SIZE, SUB_TILE_SIZE>(d_A, d_B, d_C, M, N, K);
 
     // 从GPU转移数据到CPU
     cudaMemcpy(h_C, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
