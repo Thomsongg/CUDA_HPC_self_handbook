@@ -73,9 +73,43 @@ C++目前还在使用的智能指针有几类：unique_ptr、shared_ptr、weak_p
 1. 内存泄漏，即new与delete不匹配
 2. 多线程下对象析构问题，造成这个问题本质的原因是类对象自己销毁(析构)的时候无法对自己加锁,所以要独立出来,采用这个中间层(shared_ptr).
 
-#### 2.2.1 shared_ptr
+#### 2.2.1 unique_ptr
+##### 特点
+- 独占所有权，不能拷贝只能移动
+- 零开销，性能接近裸指针
+- 自动管理资源生命周期
 
-#### 2.2.2 weak_ptr
+##### 主要方法
+- get() - 获取原始指针
+- reset() - 重置指针
+- release() - 释放所有权
+- swap() - 交换指针
+- operator-> 和 operator* - 访问对象
 
-#### 2.2.3 unique_ptr
+#### 2.2.2 shared_pty
+##### 特点
+- 共享所有权，使用引用计数
+- 支持拷贝和赋值
+- 当最后一个shared_ptr被销毁时释放资源
+
+##### 主要方法
+- use_count() - 获取引用计数
+- reset() - 重置指针
+- get() - 获取原始指针
+- swap() - 交换指针
+
+#### 2.2.3 weak_ptr
+##### 特点
+- 不增加引用计数
+- 解决shared_ptr循环引用问题
+- 需要从shared_ptr创建
+
+##### 主要方法
+- lock() - 尝试获取shared_ptr
+- expired() - 检查对象是否已被销毁
+- use_count() - 获取原始shared_ptr的引用计数
+- reset() - 重置weak_ptr
+
+#### 几种智能指针的综合使用案例
+
 
