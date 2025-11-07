@@ -11,7 +11,7 @@
 - 使用现代C++重写CUDA高性能计算代码
 - 实现高性能并发数据结构
 
-```
+```C++
 // 用现代C++重写CUDA项目，展示技术深度
 class ModernCUDALauncher {
     template<typename Kernel, typename... Args>
