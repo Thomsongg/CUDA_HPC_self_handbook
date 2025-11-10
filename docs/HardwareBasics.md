@@ -117,7 +117,7 @@ float val = smem[0][threadIdx.x];
 
 <2> 【进阶】数据布局优化：调整数据结构，不同结构体实例访问(AOS) 转变为 同一实例的对象访问连续的内存(SOA)
 优化前，使用不同结构体实例访问，每次间隔一定的步长(为结构体对齐的空间大小)
-```
+```cpp
 struct Particles
 {
     float x,y,z;
@@ -132,7 +132,7 @@ particles[tid].x += particles[tid].vx * dt;
 ```
 
 优化后，调整结构体，使用同一结构体实例，合并内存访问：
-```
+```cpp
 struct Particles
 {
     float *x, *y, *z;
