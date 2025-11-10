@@ -20,18 +20,35 @@
 
 #### 4.1.1 朴素解法 naive
 
-naive解法简单粗暴：将矩阵索引直接转置
+naive解法简单直接：将矩阵索引直接转置
 
 ```cpp
 __global void transpose_naive(float *input, float *output, int N)
 {
     int idx = thread.Idx.x + blockDim.x * blockIdx.x;
     int idy = thread.Idx.y + blockDim.y * blockIdx.y;
-    output[idx * M + idy] = input[idy * N + idx];
+    if (idy < M && idx < N)
+    {
+        output[idx * M + idy] = input[idy * N + idx];
+    }
 }
 ```
+经过Nsight Compute性能分析，这种解法在(1)GPU吞吐量Throughput和(2)内存占用率Occupancy上，效率很低。
 
-问题也显而易见：全程使用全局变量，数据读取和处理效率极差。
+##### 核心问题：非连续的内存访问
+朴素解法的问题根源在于：对一个Warp内的所有线程，内存的读取和写入操作并不都是连续的。
+我们看如下例子。假设在block0的Warp0内，数据维度(M x N) 1024 * 1024，按threadIdx.x(即列向量)的维度，观察相邻的线程：
+
+```cpp
+读取&写入事务:
+thread0: 读取 input[(0 * 1024) + 0] = input[0] -> 写入 output[(0 * 1024) + 0] = output[0]
+thread1: 读取 input[(0 * 1024) + 1] = input[1] -> 写入 output[(1 * 1024) + 0] = output[1024]  // 跨步 1024
+thread2: 读取 input[(0 * 1024) + 2] = input[2] -> 写入 output[(2 * 1024) + 0] = output[2048]  // 跨步 1024
+// 读取是连续内存，但写入时产生1024的跨步
+```
+
+相邻线程的非连续访问，会严重降低并行计算效率！
+优化思路：使用共享内存，每次进行读取操作(从input转移数据)时，先对数据进行转置，再写入output。这样保证了数据的连续性，**能够同时合并读取和写入操作**！
 
 #### 4.1.2 基于共享内存的GPU解法
 
@@ -63,10 +80,17 @@ __global void transpose_shared(float *input, float *output, int N)
 }
 ```
 
+核心：**共享内存充当了数据重排的临时缓冲区**，在取出时隐式地进行了转置(通过索引倒置)，同时合并了读取和写入操作，有效解决了内存访问不连续的问题：
+
+```cpp
+读取&写入事务:
+thread0: 读取 input[(0 * 1024) + 0] = input[0] -> 存入smem[0][0] -> 取出smem[0][0] -> 写入 output[(0 * BLOCK_SIZE) + 0] = output[0]
+thread1: 读取 input[(0 * 1024) + 1] = input[1] -> 存入smem[0][1] -> 取出smem[1][0] -> 写入 output[(0 * BLOCK_SIZE) + 1] = output[1]  // 未产生跨步
+thread2: 读取 input[(0 * 1024) + 2] = input[2] -> 存入smem[0][2] -> 取出smem[1][0] -> 写入 output[(0 * BLOCK_SIZE) + 2] = output[2]  // 未产生跨步
+// 读取和写入，均为连续操作！！！
+```
 
 #### 4.1.3 Swizzling 技术
-
-上述代码，无论是全局变量还是共享内存法，都存在一个共同的问题：内存访问不连续。
 
 注意下面的代码：
 
