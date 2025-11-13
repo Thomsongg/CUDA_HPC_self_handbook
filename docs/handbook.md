@@ -13,27 +13,34 @@
 ## 2 GPU硬件架构
 
 ## 3 CUDA基础知识
+
 ### 3.1 CUDA基本框架
+
 网格 - 线程块 - 线程
 
 ### 3.2 CUDA流 & 并发模式
+
 **特点：**
+
 - 顺序性：同一流中的操作按顺序执行
 - 并发性：不同流中的操作可以并发执行
 - 独立性：不同流之间默认相互独立
 
 **使用场景：**
+
 - 重叠主机代码与设备kernel，异步执行
 - 并发执行多个独立的kernel
 - 流水线处理，同一流按顺序执行，不同流并发执行
 - 多GPU编程
 
 **关键步骤：**
+
 1. 创建流 cudaStreamCreate(&stream[i])
 2. 等待步骤完成后启动流 cudaStreamWaitEvent(stream[i], process_done, 0)
 3. 同步流 cudaStreamSynchronize(stream[i])
 
 #### 3.2.1 任务依赖与事件同步【基础】
+
 **任务依赖管理：**
 默认情况下，同一流中的操作按顺序执行，不同流中的操作则可能并发执行。但如果没有正确管理依赖关系，可能会出现数据竞争。我们可以使用事件（cudaEvent_t）来同步不同流中的操作。
 
@@ -41,10 +48,43 @@
 事件是CUDA中用于同步的重要工具。我们可以记录事件到流中，然后等待事件发生。事件可以用于测量时间，也可以用于流之间的同步。
 
 #### 3.2.2 异步执行与多流流水线【进阶】
+
 重要概念：固定内存、内存传输重叠、流式回调函数、资源竞争
+
+**核心思想：** 内存分若干块，每一块异步执行kernel
+
 通过将计算和内存传输重叠，可以隐藏内存传输延迟。典型的方法是将数据分块，使用多个流，在每个流中依次执行：主机到设备的内存传输、内核执行、设备到主机的内存传输。这样，当其中一个流在执行内核时，另一个流可以进行内存传输。
 
+**步骤：**
+
+* 主机分配固定内存: cudaMallocHost
+* 内存分块(chunk)，每块由一个cuda流控制：
+  * 创建流
+  * 内存异步传输 cudaMemcpyAsync
+  * 流式执行核函数
+  * 【可选】添加回调函数 cudaStreamAddCallback, 继续执行其他核函数
+  * 等待流同步 cudaStreamSynchronize
+* 清理固定内存 cudaFreeHost 和GPU内存
+
+##### 固定内存
+
+固定内存是主机内存的一种，它不会被操作系统分页并交换到磁盘上，因此设备可以直接通过DMA（直接内存访问）访问固定内存，而不需要CPU的参与。
+
+特点：
+
+* 分配和释放成本较高
+* 传输速度比可分页内存快
+* 允许与设备执行并行传输
+
+固定内存的分配 cudaMallocHost：
+
+```cpp
+float* h_pinned;
+cudaMallocHost(&h_pinned, N * sizeof(float));
+```
+
 #### 3.2.3 优先级流管理【进阶】
+
 可以创建具有不同优先级的流。高优先级流中的操作可以优先得到调度。使用cudaStreamCreateWithPriority创建优先级流。
 
 ## 4 CUDA编程实战
@@ -66,9 +106,11 @@ __global void transpose_naive(float *input, float *output, int N)
     }
 }
 ```
+
 经过Nsight Compute性能分析，这种解法在(1)GPU吞吐量Throughput和(2)内存占用率Occupancy上，效率很低。
 
 ##### 核心问题：非连续的内存访问
+
 朴素解法的问题根源在于：对一个Warp内的所有线程，内存的读取和写入操作并不都是连续的。
 我们看如下例子。假设在block0的Warp0内，数据维度(M x N) 1024 * 1024，按threadIdx.x(即列向量)的维度，观察相邻的线程：
 
@@ -170,7 +212,6 @@ __global__ void transpose_xor_swizzling(float *input, float *output, int M, int 
 }
 ```
 
-
 ##### 4.1.3.2 XOR Swizzling 异或映射
 
 原理：选择一个与BLOCK_SIZE互质的因子 SWIZZLE_FACTOR, a * FACTOR + b 会形成**完全映射**，即与 BLOCK_SIZE 交错。
@@ -184,9 +225,6 @@ __global__ void transpose_xor_swizzling(float *input, float *output, int M, int 
 取出时: output[idx * M + idy] = smem[ty'][tx']
 ```
 
-
-
 ##### 4.1.3.3 其他Swizzling 映射
-
 
 ## 5 AI Infra基础
