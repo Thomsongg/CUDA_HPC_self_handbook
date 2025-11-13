@@ -13,6 +13,24 @@
 ## 2 GPU硬件架构
 
 ## 3 CUDA基础知识
+### 3.1 CUDA基本框架
+网格 - 线程块 - 线程
+
+### 3.2 CUDA流 & 并发模式
+- 顺序性：同一流中的操作按顺序执行
+- 并发性：不同流中的操作可以并发执行
+- 独立性：不同流之间默认相互独立
+
+**使用场景：**
+- 重叠主机代码与设备kernel，异步执行
+- 并发执行多个独立的kernel
+- 流水线处理，同一流按顺序执行，不同流并发执行
+- 多GPU编程
+
+**关键步骤：**
+1. 创建流 cudaStreamCreate(&stream[i])
+2. 等待步骤完成后启动流 cudaStreamWaitEvent(stream[i], process_done, 0)
+3. 同步流 cudaStreamSynchronize(stream[i])
 
 ## 4 CUDA编程实战
 
