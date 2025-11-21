@@ -237,8 +237,41 @@ struct __align__(16)
 
 ### 2.6 执行效率 (Achieved Occupancy)
 
-## 3 问题定位
+## 3 性能分析
 
-### 3.1 Warp Divergence
+### 3.1 性能分析Sections
+性能分析时，重点关注以下Sections:
+1. Compute Workload Analysis(SM计算负载分析)
+2. Instruction Statistics(汇编指令统计)
+3. Launch Statistics(内核启动统计)
+4. Memory Workload Analysis(GPU内存负载分析)
+5. Occupancy(SMs占用率)
+6. Schedular Statistics(Warp调度器统计)
+7. GPU Speed Of Light Throughput(GPU吞吐量)
+8. Warp State Statistics(Warp状态统计)
 
-### 3.2 Bank Conflict
+#### 3.1.1 Compute Workload Analysis
+
+#### 3.1.2 Instruction Statistics
+
+### 3.2 性能分析模型
+1. Roofline Charts (屋顶模型)
+2. Memory Chart (内存图表)
+3. Memory Tables
+
+#### 3.2.1 Roofline Charts
+**原理：** 通过图线，区分内存瓶颈或计算瓶颈。
+
+**组成**： 
+- X轴：Arithmetic Intensity, 代表**算术强度**，即工作量(每秒浮点运算次数)与内存传输量(每秒字节数)的比值；单位FLOP/byte
+- Y轴：Performance, **每秒浮点运算次数(FLOP/s)**
+- 交点：Ridge Point, 是**内存带宽边界**和**峰值性能边界**的交汇点。
+- 交点左侧斜线：内存带宽边界；默认由GPU的内存传输速率决定，也可自定义
+- 交点右侧水平线：峰值性能边界；默认由GPU的峰值性能决定，也可自定义
+- 同心圆点：Achieved Value，代办**当前kernel的实际性能**。
+
+## 4 问题定位
+
+### 4.1 Warp Divergence
+
+### 4.2 Bank Conflict
