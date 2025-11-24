@@ -110,6 +110,161 @@ C++目前还在使用的智能指针有几类：unique_ptr、shared_ptr、weak_p
 - use_count() - 获取原始shared_ptr的引用计数
 - reset() - 重置weak_ptr
 
-#### 几种智能指针的综合使用案例
+## 3 现代C++的应用(11/17/20)
+**核心：** 解决异构计算的三大难题
+1. 资源安全与管理：资源管理不当导致内存泄漏
+2. 代码复用与泛型：通过泛型编程，替代一整个类型(如int, float)，无需重复代码
+3. 性能与抽象的平衡：既保证代码的可读性、拓展性，又能保持良好的性能
+
+### 附 C++资源管理“五原则”(五步法)
+1. 禁止拷贝构造：防止多个对象管理同一块内存  
+```cpp
+MyClass(const MyClass&) = delete
+```
+
+2. 禁止拷贝赋值：  
+```cpp
+MyClass& operator=(const MyClass& other) = delete
+```
+
+3. 采用移动构造：从临时对象转移所有权
+```cpp
+MyClass(MyClass&& other) noexcept : d_ptr(other.d_ptr), nums(other.nums)
+{
+    // 将原对象置NULL
+    other.d_ptr = nullptr;
+    other.nums = 0;
+}
+```
+
+4. 采用移动赋值：
+```cpp
+MyClass&& operator=(MyClass&& other) noexcept
+{
+    // 防止赋值给自己
+    if (this != &other)
+    {
+        // 释放资源
+        if (d_ptr != nullptr)
+        {
+            cudaFree(d_ptr);
+        }
+
+        // 转移所有权
+        d_ptr = other.d_ptr;
+        nums = other.nums;
+
+        // 将原对象置NULL
+        other.d_ptr = nullptr;
+        other.nums = 0;
+    }
+}
+```
+
+5. 析构时释放：构造失败时自动释放资源
+
+```cpp
+~MyClass()
+{
+    // 原始指针，需手动释放
+    if (d_ptr != nullptr)
+    {
+        cudaFree(d_ptr);
+        d_ptr = nullptr;
+    }
+}
+```
+
+### 3.1 RAII & 智能指针【必须】
+**痛点**：传统C++极易出现的资源安全问题。
+1. CPU/GPU内存申请后，忘记释放
+2. 异常安全：类对象构造时，申请资源后抛出异常，无法自动析构而导致内存泄漏。
+
+**HPC的应用：** 采用RAII类进行包装，实现智能GPU内存管理。
+采用原始指针(raw_ptr)时，应严格遵守“五原则”。
+若使用智能指针(unique_ptr)，可自动释放内存，无需单独编写构造函数，极大简化对象构造。
+
+RAII的场景：
+1. 智能指针(std::unique_ptr)：将智能指针作为RAII类的成员，实现资源自动释放；类可以专注于自身业务逻辑
+2. 自定义删除器(Deleter)：一个轻量级结构体，在智能指针成员析构时自动调用，自动释放内存。
+
+代码示例：
+
+```cpp
+#include<stdexcept> // 引入异常处理
+#include<memory>    // 引入智能指针 unique_ptr
+#include<utility>   // 引入移动语义 move
+
+// Deleter结构体
+struct DeviceBufferDelelter
+{
+    void operator()(void* ptr) const
+    {
+        if (ptr)
+        {
+            cudaFree(ptr);
+        }
+    }
+}
+
+// RAII类容器，负责GPU内存管理
+template<typename T>
+class DeviceBuffer {
+private:
+    // 关键优化：使用智能指针，实现自动析构与释放
+    // 类型为模板定义，析构时自动调用Deleter
+    std::unique_ptr<T, DeviceBufferDelelter> d_ptr_ = nullptr;
+    size_t num_elements_ = 0;
+
+public:
+    // 参数构造，供外部申请内存空间
+    explicit DeviceBuffer(size_t num_elements) : num_elements_(num_elements)
+    {
+        if (num_elements == 0)
+        {
+            return;
+        }
+
+        // 分配原始指针，申请内存空间
+        T* raw_ptr = nullptr;
+        sizeError_t error;
+        error = cudaMalloc(reinterpret_cast<void**>(&raw_ptr), num_elements * sizeof(T));
+        if (error != cudaSuccess)
+        {
+            // 必要的异常处理逻辑(如日志打印)
+            reportCudaError();
+        }
+
+        // 把原始指针所有权 交还给智能指针
+        d_ptr_.reset(raw_ptr);
+    }
+
+    // 极简化对象构造(五原则)
+    // (1) 禁止拷贝
+    DeviceBuffer(const DeviceBuffer& other) = delete;
+    DeviceBuffer& operator=(const DeviceBuffer& other) = delete;
+
+    // (2) 默认移动构造
+    DeviceBuffer(DeviceBuffer&& other) noexcept = default；
+    DeviceBuffer&& operator=(DeviceBuffer&& other) noexcept = default;
+
+    // (3) 默认析构
+    ~DeviceBuffer() = default;
+}
+```
+
+### 3.2 Lambda表达式【必须】
+
+
+### 3.3 编译期条件(constexpr & if constexpr)【必须】
+
+
+### 3.4 移动语义 & 完美转发【重要】
+
+
+### 3.3 Host端并发库(std::thread, std::future, std::async)【重要】
+
+
+### 3.6 std::span
 
 
