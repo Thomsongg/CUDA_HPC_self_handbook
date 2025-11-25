@@ -257,7 +257,63 @@ public:
 
 
 ### 3.3 编译期条件(constexpr & if constexpr)【必须】
+**痛点：** 使用外部并行库(如Thrust)时，需要经常定义大量“一次性”的简单函数对象，过程繁琐、代码可读性和可维护性差。
 
+**Lambda表达式：** 一个匿名函数对象，需要时可直接定义。
+**语法：** `[capture](params) -> return_type { body }`
+- 捕获列表(capture)：
+	- \[=]: 以值的方式，捕获所有外部变量
+    - \[&]: 以引用的方式，捕获所有外部变量
+    - \[a, &b]: 以值捕获a，以引用捕获b
+    - \[this]: 捕获当前类的this指针
+- 参数列表(params): 入参列表，可以为空
+- 返回类型(return_type): 可省略（由编译器自动推导）
+- 函数体(body): 函数执行代码，可为空(必须包含'{}')
+
+**特点：**
+- 闭包性：可以捕获所在作用域的变量，并实现变量的访问和操作
+- 内联性：由编译器内联，减少函数调用开销
+- 匿名类型：提供一个匿名函数对象，可通过std::function对象保存
+- 代码简洁
+- 捕获上下文
+
+**示例1：** 保存到可调用对象 std::function
+```cpp
+typedef std::function<int(int, int)> comfun;
+// 普通函数 与 lambda表达式
+int add(int a, int b) { return a + b; }
+auto mod = [](int a, int b){ return a % b; };
+
+int main()
+{
+    // 将lambda对象保存到可调用对象 std::function
+    comfun a = add;
+    comfun b = mod;
+    std::cout << a(3, 5) << " and " << b(3, 5);
+}
+```
+
+**示例2：** 简化代码
+```cpp
+// 使用匿名函数，设置sort谓词
+std:sort(nums.begin(), nums.end(),
+         [](int a, int b) { return a > b; });
+
+```
+
+**示例3：** 捕获上下文
+
+```cpp
+int threshold = 100;
+//Lambda函数，用捕获的上下文执行特定操作
+auto filter = [threshold](int value) {
+    return value > threshold;
+};
+
+```
+
+**CUDA HPC的应用：**
+- 并行库Thrust
 
 ### 3.4 移动语义 & 完美转发【重要】
 
