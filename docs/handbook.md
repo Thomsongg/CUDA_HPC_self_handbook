@@ -285,9 +285,85 @@ __global__ void transpose_xor_swizzling(float *input, float *output, int M, int 
 
 ```cpp
 存入时: smem[ty][tx] = input[idy * N + idx];
+```
+## 5 Thrust并行库
+```cpp
 取出时: output[idx * M + idy] = smem[ty'][tx']
 ```
 
 ##### 4.1.3.3 其他Swizzling 映射
 
 ## 5 AI Infra基础
+Thrust是CUDA自带的开源库，可以简化地实现大数据并行算法。适合处理大数据中的每个元素都执行相同的操作（即大数据并行）。
+**特点：**
+1. 高层次抽象：无需了解GPU底层原理，只需调用对应的接口(如thrust::reduce)，即实现并行算法；会自动且隐式地完成线程分配、内存申请与释放、kernel调用等底层操作。
+2. 高性能：Thrust库的算法函数在后端完成了优化，会自动根据GPU架构和数据类型，智能选择对应的算法
+3. 高操作性：可以自由嵌入Kernel函数和cuBLAs等库函数。
+
+### 5.1 容器
+常用容器：
+1. 主机vector
+2. 设备vector
+3. 固定内存vector
+
+```cpp
+#include<thrust/host_vector.h>
+#include<thrust/device_vector.h>
+#include<thrust/system/cuda/vector.h>
+
+thrust::host_vector<int> h_vec = {1, 2, 3};
+
+// 自动实现 主机->设备的传输
+thrust::device_vector<int> d_vec = h_vec;
+
+// 分配固定内存vector
+thrust::cuda::vector<int> pinned_vec(100);
+```
+
+#### 容器的操作
+1. 初始化容器 `thrust::device_vector<int> d_vec(100)`
+2. 清空 `d_vec.clear()`
+3. 获取大小 `d_vec.size()`
+4. 判断是否为空 `bool isEmpty = d_vec.empty()`
+5. 访问指定元素 `int ele = d_vec[3]`
+6. 返回首元素 `d_vec.front()`
+7. 返回尾元素 `d_vec.back()`
+8. 预分配内存 `d_vec.reserve(1000)`
+9. 获取容量 `size_t cap = d_vec.capacity()`
+
+### 5.2 迭代器
+生成一组值的序列
+Thrust迭代器的种类：
+1. 常值迭代器 constant_iterator
+2. 计数迭代器 counting_iterator
+3. 变换迭代器 transform_iterator
+4. zip迭代器 zip_iterator
+
+
+```cpp
+#include<thrust/iterator/constant_iterator.h>
+#include<thrust/iterator/counting_iterator.h>
+#include<thrust/iterator/transform_iterator.h>
+#include<thrust/iterator/transform_iterator.h>
+
+// 常值迭代器：生成常数序列(42, 42, 42...)
+auto constant = thrust::make_constant_iterator(42);
+
+// 计数迭代器：生成递增序列(0, 1, 2...)
+auto counting = thrust:make_counting_iterator(0);
+
+// 变换迭代器：对元素应用特定函数
+auto transform_iter = thrust::make_transform_iterator(vec.begin(), [] __device__ (int x) { return x * x });
+
+// zip迭代器：组合多个迭代器序列
+auto zipped = thrust::make_zip_iterator(thrust::make_tuple(vec1.begin(), vec2.begin()));
+```
+
+### 5.3 基本算法
+1. 归约 thrust::reduce
+2. 排序 thrust::sort
+3. 变换 thrust::transform
+4. 前缀和 thrust::scan
+
+
+### 5.4 仿函数与Lambda表达式
