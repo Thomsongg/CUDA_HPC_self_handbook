@@ -309,10 +309,57 @@ auto filter = [threshold](int value) {
 
 ```
 
-**CUDA HPC的应用：**
-- 并行库Thrust
+**CUDA HPC的应用：** 并行库Thrust
+示例：将数组中的每个元素x 变换为 y = 2*x + 1
+
+```cpp
+#include<thrust/device_vector.h>
+#include<thrust/transform.h>
+
+template<typename T>
+using h_vec = thrust::host_vector<T>
+
+template<typename T>
+using d_vec = thrust::device_vector<T>
+
+h_vec<float> h_input = {1, 2, 3, 4, 5};
+d_vec<float> d_intput;
+d_intput = h_input
+
+d_vec<float> d_output;
+
+// 使用Lambda函数，实现 y = a*x + b, a与b通过拷贝传入
+float a = 2.0f, b = 0.2f;
+thrust::transform(d_input.begin(), d_input.end(), d_output.begin(), [=] __device__ (int x) {return a * x + b;});
+```
 
 ### 3.3 编译期条件(constexpr & if constexpr)【必须】
+在编译时决定哪部分代码会通过编译，实现性能优化。
+**特点：** 编译器条件语句，用 **`if constexpr`** 修饰。
+**原理：**
+- 如果条件判断为 **true**, 则会编译 **if** 内的语句，**彻底丢弃** else 内的代码块。
+- 如果条件判断为 **false**，则恰好相反。
+
+“彻底丢弃”：编译器不会检查剩余代码的语义/语法正确性，放弃编译。
+
+**优势**：
+1. 简化模板元编程
+2. 提高可拓展性：可以直接在同一个函数模板中添加不同条件下的处理逻辑（如各种硬件架构、不同数据类型），无需重载
+3. 零运行开销：最终生成的机器码只包含特定路径，运行时不会因路径判断导致性能损失
+
+**在CUDA HPC的应用：**
+1. 消除 Warp Divergence
+    - 问题：同一个 Warp 的不同线程，在遇到 if 分支时，会根据各自的条件判断规则，串行执行，浪费大量的执行周期。
+    - 编译期条件的优化：如果分支条件是基于一个**模板参数**（在编译时是恒定的），可以使用 `if constexpr`
+
+2. 高优化的内核(Uber-kernel)：创建高度集成化的Kernel, 将微小的功能合并，实现特定条件执行特定逻辑，无需单独创建冗余的Kernel
+3. 降低寄存器负载
+4. 适配不同的GPU硬件架构
+
+**优势：**
+1. 减少GPU周期的浪费
+2. 提升GPU Occupancy
+3. 提升计算效率
 
 ### 3.4 移动语义 & 完美转发【重要】
 
