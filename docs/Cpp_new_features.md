@@ -254,9 +254,6 @@ public:
 ```
 
 ### 3.2 Lambda表达式【必须】
-
-
-### 3.3 编译期条件(constexpr & if constexpr)【必须】
 **痛点：** 使用外部并行库(如Thrust)时，需要经常定义大量“一次性”的简单函数对象，过程繁琐、代码可读性和可维护性差。
 
 **Lambda表达式：** 一个匿名函数对象，需要时可直接定义。
@@ -314,6 +311,8 @@ auto filter = [threshold](int value) {
 
 **CUDA HPC的应用：**
 - 并行库Thrust
+
+### 3.3 编译期条件(constexpr & if constexpr)【必须】
 
 ### 3.4 移动语义 & 完美转发【重要】
 
