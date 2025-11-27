@@ -359,11 +359,180 @@ auto transform_iter = thrust::make_transform_iterator(vec.begin(), [] __device__
 auto zipped = thrust::make_zip_iterator(thrust::make_tuple(vec1.begin(), vec2.begin()));
 ```
 
-### 5.3 基本算法
-1. 归约 thrust::reduce
-2. 排序 thrust::sort
-3. 变换 thrust::transform
-4. 前缀和 thrust::scan
+### 5.3 应用场景 & 基本算法
+#### 5.3.1 数据预处理
+1. 排序(Sorting)：快速排序, thrust::sort
+2. 过滤(Filtering)：筛选符合特定条件的元素, thrust::copy_if
+3. 去重(Unique)：移除重复元素, 有 thrust::unique 和 thrust::unique_copy 两种常用操作。
 
+###### thrust::unique
+不改变原数据结构的大小。而是直接将唯一的元素挪到数组前端，并返回唯一数组的末尾。
+如：
 
-### 5.4 仿函数与Lambda表达式
+```cpp
+int[] h_vec = {1, 1, 2, 3, 3, 5, 5, 8, 8, 9};
+thrust::device_vector<int> d_vec = h_vec;
+```
+应用 thrust::unqiue后：
+
+```cpp
+// 返回去重子串的末尾指针
+// 即 {1, 2, 3, 5, 8, 9(末尾指针), ?, ?, ?, ?}
+auto unique_end = thrust::unique(d_vec.begin(), d_vec.end())
+```
+
+#### 5.3.2 数据分析与计算
+1. 归约：数据归约 `thrust::reduce(vec.begin(), vec.end(), 0, operator), 其中 operator可使用lambda表达式传入，代表要执行的归约操作(求和或最大值)`
+2. 变换：将数据中每个元素x按特定规则变换为y `thrust::transform(vec.begin(), vec.end(), vec_ret.begin(), operator)`
+3. 前缀和：求当前元素之前所有元素的和，分为 inclusive_scan(包含当前元素) 和 exclusive_scan(不包含当前元素) 两种，如 `thrust::inclusive_scan(vec.begin(), vec.end(), vec_ret.begin())`
+
+### 5.4 仿函数(functor) 与 Lambda表达式
+部分算法(如 reduce, transform. copy_if)需要谓词(即 operator)，告知其操作逻辑。这里需要传入一个 Handle, 一般由仿函数 或 Lambda表达式 实现。
+
+#### 5.4.1 仿函数(functor)
+特点：使用结构体(struct) 或 类(class)的对象构造，实现 operator()重载
+要求：必须在 operator() 前加上 `__host__ __device__` 关键字，才能同时被CPU和GPU调用
+
+示例1：使用仿函数，实现 y = a*x
+
+```cpp
+struct saxpy
+{
+    const float al
+    saxpy(float _a) : a(_a) {}  // 构造函数
+
+    // 重载 operator()
+    __host__ __device__ float operator()(const float& x) const
+    {
+        return a * x;
+    }
+};
+
+// 主函数中调用
+thrust::transform(d_input.begin(), d_input.end(), d_output.begin(), saxpy(2.0f));
+```
+
+#### 5.4.2 Lambda表达式
+特点：比仿函数更加简洁直观
+要求：必须加上 `__device__` 关键字
+
+示例2：使用 Lambda函数，实现 y = a*x
+
+```cpp
+float a = 2.0f;
+thrust::transform(d_input.begin(), d_input.end(), d_output(), [=] __device__ (int x) {return a * x});
+```
+
+### 详细使用场景
+编译：使用nvcc编译.cuda文件，采用C++17
+
+```bash
+nvcc thrust_examples.cu -o
+thrust_examples -std=c++17
+```
+
+头文件：
+
+```cpp
+#include<thrust/device_vector.h>    // 设备vector
+#include<thrust/copy.h>     // 筛选算法copy_if
+#include<thrust/sort.h>     // 排序算法sort
+#include<thrust/reduce.h>   // 归约reduce
+#include<thrust/transform.h>    // 变换transform
+#include<thrust/unique.h>       // 去重unique
+#include<thrust/scan.h>     // 前缀和 scan
+#include<thrust/iterator/back_inserter.h>
+```
+
+初始化数据：
+
+```cpp
+int h_data[] = {1, 3, 5, 2, 9, 4, 8};
+// 初始化一个设备vector
+thrust::device_vector<int> d_data = h_data;
+```
+
+数据归约(reduce)：
+
+```cpp
+// 加法归约：handle使用thrust::plus; 0为初始值
+int sum = thrust::reduce(d_vec.begin(),d_vec.end(), 0, thrust::plus<int>());
+```
+
+变换(transform)：对数据里每个元素x, 执行y = ax + b
+
+```cpp
+// 新建数组保存变换后的值
+thrust::device_vector<int> d_ret(n);
+
+// 使用Lambda表达式，定义操作
+// 加上__device__关键字，在GPU执行
+auto saxpy = [=] __device__ (int x)
+{
+    int a = 2, b = 1;
+    return a * x + b;
+}
+
+// 执行变换
+thrust::transform(d_vec.begin(), d_vec.end(), d_ret.begin(), saxpy);
+```
+
+数据排序(sort)：默认升序排序
+
+```cpp
+// 初始化一组新数据
+int[] h_vec2 = {1, 8, 3, 3, 9, 2, 8, 5, 5, 1};
+thrust::device_vector<int> d_vec2 = h_vec2;
+
+// 升序排序，默认执行
+thrust::sort(d_vec2.begin(), d_vec2.end());
+```
+
+数据去重(unique)：
+
+```cpp
+thrust::device_vector<int> d_ret2;
+
+// (1) 使用unique_copy, 实现"去重并拷贝"
+//     配合 thrust::back_inserter 使用
+thrust_unique_copy(d_vec2.begin(), d_vec2.end(), thrust::back_inserter(d_ret2));
+
+// (2) 使用 unique 返回的末尾指针，手动擦除无效数据(erase)
+thrust::device_vector<int> d_temp = d_vec2;
+auto unique_end = thrust::unique(d_temp.begin(), d_temp.end());
+d_temp.erase(unique_end, d_temp.end());
+```
+
+数据筛选(copy_if)：过滤/筛选特定元素
+
+```cpp
+// 例. 筛选出所有的偶数
+thrust::device_vector<int> d_filtered;
+
+// 定义 operator(也称谓词)的Lambda函数, 筛选出偶数
+auto is_even = [=] __device__ (int x)
+{
+    return (x % 2) == 0;
+}
+
+// 执行筛选操作 copy_if
+// 1st & 2nd 参数：原数组头、尾
+// 3rd 参数：使用 back_inserter, 将筛选的数据(拷贝后)尾插到新数组
+// 4th 参数：operator
+thrust::copy_if(d_vec2.begin(), d_vec2.end(), thrust::back_inserter(d_filtered), is_even);
+```
+
+使用别名优化：可以使用模板别名(template + using)，简化繁琐的数据初始化和算法调用语句
+
+```cpp
+// 定义模板别名
+template<typename T>
+using h_vec = thrust::host_vector<T>;
+
+template<typename T>
+using d_vec = thrust::device_vector<T>;
+
+// 使用别名进行初始化
+h_vec<int> h_input = {1, 2, 3, 4, 5};
+d_vec<int> d_input = h_input;
+```
