@@ -361,6 +361,222 @@ thrust::transform(d_input.begin(), d_input.end(), d_output.begin(), [=] __device
 2. 提升GPU Occupancy
 3. 提升计算效率
 
+#### 使用场景详解
+###### (1) 消除 Warp Divergence
+**场景：** 根据操作Handle，选择 向量加法 或 求最大值
+**方法：** 使用模板类定义 操作Handle，通过编译期条件 选择特定核函数运行；完美规避运行期的 if分支 导致的 Warp Divergence
+
+代码如下：
+
+```cpp
+// 枚举类 定义操作类型
+enum class OpType
+{
+    Sum,
+    Max
+};
+
+// 使用 编译期条件 的Device函数
+template<Optype op, typename T>
+__device__ T perform_op(T a, T b)
+{
+    // 根据编译时实际的操作类型，选择特定分支进行实例化
+    if constexpr ()
+    {
+        return a + b;
+    }
+    else
+    {
+        return fmaxf(a, b);
+    }
+}
+
+// 应用 device函数 的Kernel
+template<Optype op, typename T>
+__global__ void process_data(const T* A, const T* B, T* C, int n)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N)
+    {
+        // 这里编译时会触发device函数的编译器条件判断
+        // 最终运行时只会保留一个分支代码
+        C[idx] = perform_op<op, T>(A[idx], B[idx]);
+    }
+}
+```
+
+###### (2) “超级内核”(Uber-kernel)
+**场景：** 结合模板和编译期条件，控制以下三个维度
+1. 数据类型泛化(int / float / double)
+2. 是否应用缩放(ApplyScaling)
+3. 是否使用原子操作(UseAtomics)
+
+前提-使用<type_traits>库中的 `std::is_same_v`，判断两个数据类型是否相同
+
+代码示例如下：
+
+```cpp
+// Kernel使用模板类控制
+template<typename T, bool ApplyScaling, bool UseAtomics>
+__global__ void uber_kernel(const T* input, T* output, T scale, int N)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= N)
+    {
+        return;
+    }
+
+    // 寄存器内执行高精度计算
+    T val = input[idx];
+
+    // (1) 特性1: 特定数据类型执行单独的计算
+    //     double类型执行高精度计算, float类型使用快速近似
+    if constexpr(std::is_same_v(T, double))
+    {
+        val = (a * a + a) / 1.23456789;
+    }
+    else
+    {
+        // 快速倒数
+        val = __frcp_rn(val);
+    }
+
+    // (2) 特性2: 可选项，是否对数据进行特定大小的缩放
+    if constexpr (ApplyScaling)
+    {
+        val *= scale;
+    }
+
+    // (3) 特性3: 是否使用原子操作
+    if constexpr (UseAtomics)
+    {
+        // 注意：原子操作只有float类型可用
+        //      其他类型需要自定义
+        if constexpr (std::is_same_v(T, float))
+        {
+            atomicAdd(&output[0], val);
+        }
+        else
+        {
+            // 自定义原子函数，在此忽略...
+        }
+    }
+    else
+    {
+        output[idx] = val;
+    }
+}
+
+```
+
+几种编译期条件不同的kernel调用示例：
+
+```cpp
+// 传入参数 scale, 但不进行缩放(ApplyScaling=false)
+// 结果：参数正常传入，但不会被使用
+double scale_d = 2.0;
+uber_kernel<double, false, false><<< gridSize, blockSize >>>(d_input, d_output, scale_d, N);
+
+```
+
+###### (3) 降低寄存器压力
+**场景：** 部分高精度计算场景，要求GPU分配大量的寄存器以实现更快的数据传输。但低精度(float及以下)时，如果使用 运行期if, 编译器会预先分配额外的寄存器，即使没有用到，也会极大增加寄存器压力，影响 Occupancy等性能指标。
+
+**方法：** 结合模板和编译期条件，区分高/低精度模式，在编译时执行保留并执行特定的逻辑。
+
+代码示例如下：
+
+```cpp
+#include<stdlib.h>
+#include<type_traits>
+
+template<typename T>
+__global__ void complex_cal(const T* input, T* output, int N)
+{
+    int idx = ...;
+    if (idx >= N)
+    {
+        return;
+    }
+
+    // 只有高精度才需要额外分配一个 16bytes 寄存器
+    if constexpr (std::is_same_v(T, double))
+    {
+        // 模拟高精度计算
+        double temp_reg[16];
+        double val = (double)input[idx];
+        temp_reg[0] = val;
+        for (int i = 1; i < 16; i++)
+        {
+            temp_reg[i] = (temp_reg[i - 1] * 1.01 + 0.01) * val;
+        }
+        output[idx] = temp_reg[15];
+    }
+    // 低精度无需额外分配寄存器，只执行简单计算
+    else
+    {
+        T val = input[idx];
+        val = val * 0.5f + 1.2f;
+        output[idx] = val;
+    }
+}
+
+```
+
+###### (4) 适配硬件架构
+**场景：** 归约算法的 Warp Shuffle，需要使用Warp内线程同步操作。需要根据GPU架构匹配对应的处理逻辑。
+1. 较新的GPU架构支持 `__shfl__sync()`指令
+2. 较老架构只支持 `__sync()`指令
+3. 更老的架构均不支持
+
+**方法：** 使用`__CUDA__ARCH__`宏，选择合适的指令实现 Warp Shuffle 的Device函数
+
+**说明：** 
+1. `__CUDA__ARCH__`是一个编译期常量，其值等于架构号(如 CC 7.0) * 100
+2. 如果没有为设备编译，则`__CUDA__ARCH__`未定义或其值为0
+
+代码如下：
+
+```cpp
+__device__ float warp_reduce_sum(float val)
+{
+    // (1) 新架构(Volta及以上， CC 7.0+)
+    #if defined (__CUDA__ARCH__) && __CUDA__ARCH__ >= 700
+    {
+        if constexpr (__CUDA__ARCH__ >= 700)
+        {
+            // 支持全线程shuffle同步，采用全掩码
+            unsigned mask = 0XFFFFFFFFU;
+            for (int offset = 16; offset > 0; offset /= 2;)
+            {
+                val += __shfl_down_sync(mask, val, offset);
+            }
+        }
+    }
+
+    // (2) 较老架构(CC 3.0-7.0)
+    #elif defined (__CUDA__ARCH__) && __CUDA__ARCH__ >= 300
+    {
+        if constexpr (__CUDA__ARCH__ < 700) && (__CUDA__ARCH__ > 300)
+        {
+            // 使用较老的shuffle指令，无掩码操作
+            // 注意：需要告知编译器，忽略指令过期提示
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+            for (int offset = 16; offset > 0; offset /= 2;)
+            {
+                val += __shfl_down(val, offset);
+            }
+            #pragma GCC diagnostic pop
+        }
+    }
+    #endif
+
+    return val;
+}
+
+```
+
 ### 3.4 移动语义 & 完美转发【重要】
 
 
