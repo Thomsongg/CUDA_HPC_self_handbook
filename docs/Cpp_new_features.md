@@ -578,9 +578,18 @@ __device__ float warp_reduce_sum(float val)
 ```
 
 ### 3.4 移动语义 & 完美转发【重要】
+移动语义：本质是一种**类型转换**，将参数转换为**右值引用(&&)**，转移资源所有权给新的对象。
 
+**在CUDA HPC中的意义：** 
+- 拷贝代价高昂：需要重新调用cudaMalloc分配一块GPU内存，很慢且产生内存占用；还要调用cudaMemcpy额外实现内存传输，占用PCIe/MVlink带宽。
+- 期望的效果：如果只想把一个GPU缓冲区转移到其他函数中，或存入一个容器(如thrust::device_vector)时，直接转移而非拷贝。
 
-### 3.3 Host端并发库(std::thread, std::future, std::async)【重要】
+**应用场景：**
+1. 工厂函数：专门创建和初始化GPU缓冲区
+2. 在容器中管理多个缓冲区
+3. 转移所有权给另一个对象
+
+### 3.5 Host端并发库(std::thread, std::future, std::async)【重要】
 
 
 ### 3.6 std::span
