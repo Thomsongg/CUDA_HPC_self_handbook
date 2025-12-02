@@ -286,13 +286,13 @@ __global__ void transpose_xor_swizzling(float *input, float *output, int M, int 
 ```cpp
 存入时: smem[ty][tx] = input[idy * N + idx];
 ```
-## 5 Thrust并行库
+
 ```cpp
 取出时: output[idx * M + idy] = smem[ty'][tx']
 ```
 
-##### 4.1.3.3 其他Swizzling 映射
 
+## 5 Thrust并行库
 Thrust是CUDA自带的开源库，可以简化地实现大数据并行算法。适合处理大数据中的每个元素都执行相同的操作（即大数据并行）。
 **特点：**
 1. 高层次抽象：无需了解GPU底层原理，只需调用对应的接口(如thrust::reduce)，即实现并行算法；会自动且隐式地完成线程分配、内存申请与释放、kernel调用等底层操作。
