@@ -173,8 +173,80 @@ void process_with_dependency(Data* data) {
 }
 ```
 
-##### 2.4.4 重要应用：实现“重叠(Overlap)”
-待补充
+##### 2.4.4 实现拷贝与计算的“重叠(Overlap)”
+**思路：** 流水线式处理。将大任务分块 (Chunks)，使用多个流多批次处理，实现 拷贝+计算 重叠
+
+目标：当 GPU 计算第 i 块时，同时拷贝第 i+1 块的数据到 Device, 并拷贝第 i-1 块的结果到 Host
+
+代码如下：
+
+```cpp
+void process_pipelined(float* h_in, float* h_out, int N) {
+    // 用 n 个流处理，将待处理数据分成 n 份
+    const int N_STREAMS = 2;
+    const int CHUNK_SIZE = N / N_STREAMS;
+    size_t chunk_bytes = CHUNK_SIZE * sizeof(float);
+
+    // 将输入输出数据 d_in, d_out 分割成2段，每个流处理一段
+    cudaStream_t streams[N_STREAMS];
+    float* d_in[N_STREAMS];
+    float* d_out[N_STREAMS];
+
+    // 申请固定内存，实现 HtoD 和 DtoH
+    float *h_pinned_in, *h_pinned_out;
+    cudaHostAlloc(&h_pinned_in, N * sizeof(float), cudaHostAllocDefault);
+    cudaHostAlloc(&h_pinned_out, N * sizeof(float), cudaHostAllocDefault);
+
+    // h_in -> h_pinned_in 使用常规 memcpy (CPU)
+    memcpy(h_pinned_in, h_in, N * sizeof(float));
+
+    // 创建 Streams
+    // 每个 stream 管理一个 Chunk 的 GPU 内存
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        cudaStreamCreate(&stream[i]);
+        cudaMalloc(&d_in[i], chunk_bytes);
+        cudaMalloc(&d_out[i], chunk_bytes);
+    }
+
+    // 流水线模式: GPU 计算与 GPU-CPU 双向传输
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        // (1) 获取当前 chunk 的主机内存，等待传输给 GPU 内存
+        float* h_in_chunk = h_pinned_in + i * CHUNK_SIZE;
+        float* h_out_chunk = h_pinned_out + i * CHUNK_SIZE;
+
+        // (2) 获取当前要使用的 stream
+        cudaStream_t stream = streams[i];
+
+        // (3) 执行“计算+传输”任务，实现重叠
+        cudaMemcpyAsync(d_in[i], h_in_chunk, chunk_bytes, cudaMemcpyHostToDevice);
+        meKernel<<<..., stream>>>(d_out[i], d_in[i], CHUNK_SIZE);
+        cudaMemcpyAsync(h_out_chunk, d_out[i], chunk_bytes, cudaMemcpyDeviceToHost);
+    }
+
+    // 等待所有流执行完毕
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        cudaStreamSynchronize(stream);
+    }
+
+    // 释放资源，包括 stream, 全局内存和固定内存
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        cudaStreamDestroy(streams[i]);
+        cudaFree(d_in[i]);
+        cudaFree(d_out[i]);
+    }
+    cudaFreeHost(h_pinned_in);
+    cudaFreeHost(h_pinned_out);
+}
+```
+
+##### “重叠”的优化版本：有限 stream 的情况
+由于 GPU 资源限制，我们能分配的 streams 是有限的。如果待处理数据量非常庞大，即使分块处理， chunk 数远大于 streams 数，不可能为每一个 chunk 分配一个单独的 stream
+
+**改进思路：** 使用 Grid-Stride Loops 方法 或 Round-Robin (轮询)调度。
 
 ## 4 CUDA编程实战
 
