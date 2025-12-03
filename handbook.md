@@ -1,11 +1,13 @@
 # CUDA C++学习笔记
 
-本文档主要以个人的学习笔记、心得体会为主，聚焦以下几个方面：
+本文档聚焦于 CUDA C++ 开发，内容涉及以下几个方面：
 
-* CUDA抽象硬件层，线程、Warp、线程块、网格之间的关系，SIMT机制
-* CUDA编程实战，经典案例与算子，Nsight Compute性能分析
-* AI Infra基础知识，分布式存储
-* *AI大模型基础*
+* CUDA 基础，含 CUDA 基本框架、常用 API 和基本操作，方便新人快速上手。
+* CUDA Stream 流式模型与并发，学习 CUDA 框架下 GPU 并发模式，涉及 CPU 固定内存的异步传输、Stream 的事件同步、 Stream 流间依赖、计算与内存传输重叠式执行。
+* CUDA 编程实战，通过经典案例与算子，逐步掌握 CUDA C++ 基本开发原理及内存模型，并深入了解 CUDA 硬件级问题（如 Warp Divergence, Bank Conflict）的原理及优化方法。
+* CUDA 性能分析，学习使用 CUDA 官方性能分析工具 Nsight Compute 软件和指令集，通过各项指标（如 Occupancy, Throughput）和模型（如 Roofline Model），定向分析 GPU 运行缺陷，针对性优化。
+* Thrust 并行库，学习 CUDA 官方开源的 Thrust 并行算法库，掌握基本用法，通过定制化的数据结构（如 device_vector 和 iterator）和算法（如 reduce, sort），快速实现并行计算
+* AI Infra 基础知识，了解 AI Infra 领域中的重要概念和模式，如分布式存储
 
 ## 0 引言
 
