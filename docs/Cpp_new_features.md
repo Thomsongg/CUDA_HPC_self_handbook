@@ -589,9 +589,344 @@ __device__ float warp_reduce_sum(float val)
 2. 在容器中管理多个缓冲区
 3. 转移所有权给另一个对象
 
-### 3.5 Host端并发库(std::thread, std::future, std::async)【重要】
+代码示例：待补充
 
+### 3.5 结构化绑定 (C++17)
+允许用一个对象的元素或成员，同时实例化多个实体。
 
-### 3.6 std::span
+**优势：** 在特定数据结构中，无需繁琐的写法（如 .first, .second），直接返回其多个成员值。
+
+C++ 中的示例：
+
+```cpp
+// 定义一个结构体，需要实例化拿到其成员
+struct MyStruct {
+    int i = 0;
+    std::string s;
+};
+
+// 传统写法
+MyStruct ms;
+int x = ms.i;
+string y = ms.s;
+
+// 结构化绑定: 简单快捷
+auto [x, y] = ms;
+```
+
+尤其适用于返回结构体或数组的函数，如下：
+
+```cpp
+Mystruct getStruct() {
+    return MyStruct{42, "hello"};
+}
+
+// 结构化绑定，直接获取函数的对应返回值
+auto [u, v] = getStruct();
+```
+
+**CUDA HPC的应用：** 处理坐标 (x, y, z)、复数、设备函数中返回多个值，使用结构化绑定的写法，简单快捷。
+
+代码示例：
+假设有一个返回不同坐标值的函数，使用结构化绑定获取坐标
+
+```cpp
+// 传统写法
+auto dims = get_grid_dims();
+int x = dims.x, y = dims.y, z = dims.z;
+
+// 现代化写法
+auto [x, y, z] = get_grid_dims();
+```
+
+### 3.6 内联变量 (C++17)
+允许在头文件中直接定义变量，且保证全局唯一。当这个头文件被多个 .cpp 程序包含时，其他的程序可以直接使用，不会触发编译器报错。**即编译期定义一个可供多个程序使用（直接通过命名空间使用）的常量**。
+
+传统做法：用 extern 在.h 中 声明，在 .cpp 程序中定义
+
+```cpp
+// 头文件中只能声明 extern, 外部可访问
+extern int num;
+
+// 在 .cpp 程序中定义
+int num = 10;
+```
+
+**现代方式：** 示例，全局配置或类的静态成员
+- 非静态变量使用内联 `inline`
+- 类或结构中的静态变量使用内联 `static inline`
+
+头文件： Config.h
+
+```cpp
+#gragma once
+#include<string>
+
+// 非静态变量直接定义
+inline int globalCounter = 0;
+
+class AppConfig
+{
+    public:
+        // 静态变量也可以用 inline 在类内初始化
+        // 无需单独在 .cpp 程序中定义
+        static inline std::string appName = "MyApp";
+        static inline double version = 1.0;
+}
+```
+
+两个 .cpp 程序，分别包含 .h 文件并使用其中的变量
+
+文件1： ModuleA.cpp
+
+```cpp
+#include"Config.h"
+#include<iostream>
+
+void funcA()
+{
+    globalCounter++;
+    std::cou << "ModuleA: " << AppConfig::appName << std::endl;
+}
+```
+
+文件2： ModuleB.cpp
+
+```cpp
+#include"Config.h"
+#include<iostream>
+
+void funcA()
+{
+    globalCounter++;
+    std::cou << "Counter is now: " << globalCounter << std::endl;
+}
+```
+
+**CUDA HPC中的应用：** CUDA HPC开发中，会遇到头文件 (.h)、C++程序 (.cpp)、Cuda程序 (.cu)的混合编译，极易引发“多重定义”的问题。内联变量 (inline params) 经常与 constexpr 配合使用，在编译器即定义，可以极大地简化代码结构。
+- `inline`: 头文件中直接定义变量，可正常在 .cpp 程序中使用
+- `constexpr`: 在 .cu 程序中以编译期常量（立即数）直接传入，获得极高性能
+
+**优点：**
+1. 完美实现 Host 与 Device 的常量共享
+2. 简化配置类的静态成员管理
+3. 助力 "Header-Only" 库的开发
+
+#### (1) 完美实现 Host 与 Device 的常量共享
+一些常量，如物理常数、数组大小、阈值等，既要在 CPU 代码中使用（如内存分配、数据校验），也要在 GPU Kernel中使用（计算任务）。
+
+- 旧方法：
+	- (1) `#define`： 类型不安全，调试困难，没有命名空间
+    - (2) `static const`： 编译器版本过低，取地址时会导致链接错误
+    - (3) `extern`: 需要在头文件中声明，在 .cpp 程序中定义；但 .cu 中的 Kernel 函数仍需要通过拷贝传入，性能开销大
+- 新方法 (inline)
+	- 同时声明与定义：使用 `inline constexpr`, 可直接在头文件中定义常量
+    - Host 端：是正常的变量，有地址，且全局唯一
+    - Device 端：由于 constexpr, nvcc 编译器将其视为**编译期字面量**嵌入 PTX 代码中，性能极高
+
+代码示例：一个头文件被 .cpp 和 .cu 共用
+
+头文件： PhysicParams.h
+
+```cpp
+#pragma once
+
+// 使用命名空间 + inline constexpr 定义常量
+// 可同时在 .cpp 和 .cu 中使用
+namespcae Phys
+{
+    inline constexpr int MAX_PARTICLES = 1024;
+    inline constexpr float GRAVITY = 9.81f;
+    inline constexpr float THRESHOLD = 0.001f;
+}
+```
+
+CUDA 核心代码： Simulation.cu
+
+```cpp
+#include "PhysicParams.h"
+#include <iostream>
+
+__global__ void updateParticles(float* data)
+{
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+    // 头文件中的内联变量，被 nvcc 编译为“立即数”，直接传入
+    if (idx < Phys::MAX_PARTICLES)
+    {
+        data[idx] = data[idx] + Phys::GRAVITY;
+    }
+}
+
+void launchSim(float* d_data)
+{
+    // 线程块大小也使用内联变量直接传入
+    updateParticles<<<girdSize, Phys::MAX_PARTICLES>>>(d_data);
+}
+```
+
+C++ 主程序： main.cpp
+
+```cpp
+#include "PhysicParams.h"
+#include <iostream>
+#include <vector>
+
+int main()
+{
+    // 在 Host 端作为普通变量使用
+    std::cout << "Initializing " << Phys::MAX_PARTICLES << " particles..." << std::endl;
+
+    // 使用内联变量创建一个 vector
+    std::vector<float> hostData(Phys::MAX_PARTICLES, 0.0f);
+    
+    // 内存申请、拷贝与 .cu执行逻辑...
+    return 0;
+}
+```
+
+#### (2) 简化配置类的静态成员管理
+**场景：** 一个复杂的 CUDA HPC 工程会同时包含头文件 (.h)、C++程序 (.cpp)和 CUDA 程序 (.cu), 经常需要一个通用的 Config 类来管理全局配置。如果没有内联变量，开发者会混淆 .cpp 和 .cu 中定义的配置信息。即通用配置定义不收敛。
+
+**改进：** 直接在头文件中使用内联定义配置信息。可极大简化程序代码，统一编码规范，保证工程代码的可读性和可维护性。
+- 配置信息定义统一归拢在头文件中
+- 程序 (.cu 和 .cpp) 不单独定义，只负责使用
+
+代码示例：
+
+头文件: GpuConfig.h
+
+```cpp
+#pragma once
+#include <string>
+
+struct GpuConfig
+{
+    // 直接初始化静态成员，归拢在头文件中
+    // 这里不用 constexpr, 可以在 .cpp 中修改
+    static inline int blockSize = 256;
+    static inline int maxGridSize = 65535;
+    static inline bool enableDebug = true;
+    static inline std::string deviceName = "RTX 4090";
+}
+```
+
+主程序: main.cpp
+
+```cpp
+#include "GpuConfig.h"
+
+int main()
+{
+    // 修改内联变量 blockSize, 非 const 变量可操作
+    GpuConfig::blockSize = 512;
+    // 其他操作...
+    return 0;
+}
+```
+
+CUDA 程序: KernelWrapper.cu
+
+```cpp
+#include "GpuConfig.h"
+
+// 此处读取的是最新的值
+int blockDim = GpuConfig::blockSize;
+int gridDim = 100;
+
+// 调用 Kernel ...
+```
+
+#### (3) 实现 "Header-Only" 库的开发
+使用内联变量，可以编写一个单头文件的 CUDA 工具库，由外部直接 `#include` 这个头文件即可使用。
+
+**优点：**
+- 直接在头文件中实现变量和函数的定义，无需 .cpp 实现
+- 避免“重复定义”错误
+
+代码示例：
+
+单头文件工具库: CudaUtils.h
+
+```cpp
+#pragma once
+#include <cuda_runtime.h>
+#include <iostream>
+
+namespace MyUtils
+{
+    // 使用内联变量，创建一个全局的默认 stream
+    inline cudaStream_t globalStream = 0;
+
+    // 定义一个全局的错误回调函数指针
+    using ErrorCallback = void(*)(const char*);
+    inline ErrorCallback onError = [](const char* msg)
+    {
+        std:cerr << "CUDA Error: " << msg << std::endl;
+    }
+
+    // 定义一个初始化 stream 的工具
+    inline void init()
+    {
+        cudaStreamCreate(&globalStream);
+    }
+}
+```
+
+### 3.7 折叠表达式 (C++17)
+折叠表达式 (Fold Expression) 是模板元编程中非常重要的特性，能够极大简化**边长参数模板**的处理逻辑。
+
+**场景：** 入参数量不定时，需要对所有参数应用一个一元/二元运算符（即应用同样的计算模式）。
+
+传统方法：需要递归模板实例化，由一个基准函数处理结束条件，一个递归函数处理剩余参数。
+
+传统方法实现：
+
+```cpp
+// 需要单独的递归函数，返回剩余参数
+template<typename T>
+auto foldSumRec(T arg)
+{
+    return arg;
+}
+
+// 基准函数，用递归实现参数间运算
+template<typename T1, typename... Ts>
+auto foldSumRec(T1 arg1, Ts... otherArgs)
+{
+    return arg1 + foldSumRec(otherArgs...);
+}
+```
+写法繁琐，而且编译效率差。
+
+**现代方法：**使用“折叠表达式”，对参数包中的所有元素应用二元运算符。
+
+上述示例可以优化为：
+
+```cpp
+// 对每个参数应用模板 typename T
+template<typename... T>
+auto foldSumRec(T args)
+{
+    // 对每个 arg(i) 应用加法运算符
+    // 一元左折叠
+    return (... + args);
+}
+```
+
+**折叠表达式的语法：**
+- 一元右折叠：从右向左结合; (E op ...)
+- 一元左折叠：从左向右结合; (... op E)
+- 二元右折叠：带初始值的右结合; (E op ... op I)
+- 二元左折叠：带初始值的左结合; (I op ... op E)
+
+**优点：**
+- 代码简洁：无需递归实现，仅需一行代码，完美地体现出意图
+- 编译性能强：减少了模板实例化的层数，减轻编译器负担
+
+**CUDA HPC 中的应用：** 
+待补充
+
+### 3.8 std::span (C++20)
 
 
