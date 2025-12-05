@@ -909,22 +909,197 @@ template<typename... T>
 auto foldSumRec(T args)
 {
     // 对每个 arg(i) 应用加法运算符
-    // 一元左折叠
+    // 一元左折叠, 等同于 ((args1 + args2) + args)
     return (... + args);
 }
 ```
 
 **折叠表达式的语法：**
-- 一元右折叠：从右向左结合; (E op ...)
-- 一元左折叠：从左向右结合; (... op E)
-- 二元右折叠：带初始值的右结合; (E op ... op I)
-- 二元左折叠：带初始值的左结合; (I op ... op E)
+- 一元右折叠：从右向左结合; `(args op ...)`
+- 一元左折叠：从左向右结合; `(... op args)`, **推荐使用**
+- 二元右折叠：带初始值 `val` 的右结合; `(args op ... op val)`; 两侧的运算符 op 必须相同
+- 二元左折叠：带初始值 `val` 的左结合; `(val op ... op args)`; 两侧的运算符 op 必须相同, **推荐使用**
+
+注：二元折叠时，参数包 `args` 可以为空，即 `size(args) == 0` 时也能运行
 
 **优点：**
 - 代码简洁：无需递归实现，仅需一行代码，完美地体现出意图
 - 编译性能强：减少了模板实例化的层数，减轻编译器负担
 
-**CUDA HPC 中的应用：** 
+**代码示例：**
+
+#### (1) 基础数学运算
+
+```cpp
+// 累加：一元右折叠实现 (args op ...)
+template<typename... T>
+auto sum_right(T... args)
+{
+    return (args + ...);
+}
+
+// 减法（被减数100）：二元左折叠实现 (val op ... op args)
+template<typename... T>
+auto subtract_from_100(T... args)
+{
+    return (100 - ... - args);
+}
+
+// 主程序内的调用
+// 无需单独传入 typename 给模板，由参数包自动解析
+
+// 传入参数包 args : (1, 2, 3, 4, 5)
+// 展开逻辑： (1 + (2 + (3 + (4 + 5)))) = 15
+auto result1 = sum_right(1, 2, 3, 4, 5);
+std::cout << "Result1: " << result1 << std:endl;
+
+// 传入参数包 (10, 20, 5), 初始值 100 在函数内
+// 展开逻辑： (((100 - 10) - 20) - 5)
+auto result2 = subtract_from_100(10, 20, 5);
+```
+
+#### (2) 逻辑运算
+检查所有参数是否全为 true 或 其一 true
+
+```cpp
+// 检查参数是否全为 true
+template<typename... T>
+bool all_true(T... args)
+{
+    // 一元左折叠
+    return (... && args);
+}
+
+// 检查是否其一为 true
+template<typename... T>
+bool any_true(T... args)
+{
+    return (... || args);
+}
+
+// 调用
+bool c1 = true, c2 = false, c3 = true;
+if (all_true(c1, c2, c3))
+{
+    std::cout << "All parameters are true." << std::endl;
+}
+else if (any_true(c1, c2, c3))
+{
+    std::cout << "At least one is true." << std::endl;
+}
+else
+{
+    std::cout << "All are false." << std::endl;
+}
+
+```
+
+#### (3) 顺序执行【重要】
+利用 `,` 运算符的特性（先执行坐标，丢弃结果，再执行右边），可以对参数包 `args` 中的每一个元素执行特定操作/
+- 打印指定参数 `argi`
+- 调用函数 `func_i`
+
+##### 示例1：打印所有参数
+**用法：** 使用二元左折叠 + `,` 运算符
+
+```cpp
+// 打印参数包中所有参数
+template<typename... T>
+void print_lines(T... args)
+{
+    // 使用二元左折叠 + ',' 运算符
+    ((std::cout << args << "\n"), ...);
+}
+
+// 函数调用
+print_lines("Hello", 42, 3.14, "World");
+```
+
+##### 示例2：批量调用成员函数
+对一组对象都执行特定的方法 `.update()`
+
+```cpp
+// 给不同结构体定义各自的 update 方法
+struct Player
+{
+    int id;
+    void update()
+    {
+        std::cout<< "Player " << id << " updated.\n";
+    }
+};
+
+struct Enemy
+{
+    int id;
+    void update()
+    {
+        std::cout<< "Enemy " << id << " updated.\n";
+    }
+};
+
+// 对任意类型对象，依次调用对应的 .update()
+template<typename... Objects>
+void update_all(Objects&... objs)
+{
+    // 使用 , 运算符，实现顺序折叠
+    (objs.update(), ...);
+}
+
+// 调用
+Player p1{1};
+Enemy e1{101};
+Player p2{2};
+
+// 依次对 p1, e1, p2 调用 update()
+update_all(p1, e1, p2);
+```
+
+#### (4) 容器操作（批量压入数据）
+一次性将数据依次压入容器 (如 vectror)，实现快捷存储。
+
+```cpp
+// 批量向 vector 压入元素
+template<typename T, typename... Args>
+void push_all(std::vector<T>& v, Args... args)
+{
+    (v.push_back(args), ...);
+}
+
+// 调用
+std::vector<float> numbers;
+push_all(numbers, 10.0f, 3.14f, 5.25f);
+
+// 输出
+for (int n : numbers)
+{
+    std::cout << n << " ";
+}
+std::cout << std::endl;
+```
+
+#### (5) 高级用法：组合函数调用 (Map 模式)
+先对所有参数应用一个函数，再处理结果。
+如：计算所有参数的平方和
+
+```cpp
+// 求平方的函数
+int square(int x)
+{
+    return x * x;
+}
+
+// 计算所有参数的平方和
+template<typename... Args>
+int sum_of_squares(Args... args)
+{
+    // 先对每个参数求平方，再计算累加和
+    // 等同于 ((x1 * x1 + x2 * x2) + ...)
+    return (square(args) + ...);
+}
+```
+
+#### CUDA HPC 中的应用
 待补充
 
 ### 3.8 std::span (C++20)
