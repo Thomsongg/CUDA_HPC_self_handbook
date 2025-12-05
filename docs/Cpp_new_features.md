@@ -11,34 +11,6 @@
 - 使用现代C++重写CUDA高性能计算代码
 - 实现高性能并发数据结构
 
-```C++
-// 用现代C++重写CUDA项目，展示技术深度
-class ModernCUDALauncher {
-    template<typename Kernel, typename... Args>
-    void launch_optimized(dim3 grid, dim3 block, Kernel&& kernel, Args&&... args) {
-        // 使用完美转发保持参数类型
-        kernel<<<grid, block>>>(std::forward<Args>(args)...);
-        
-        // 现代错误处理
-        if (auto error = cudaGetLastError()) {
-            throw std::runtime_error(cudaGetErrorString(error));
-        }
-    }
-};
-
-// 实现高性能并发数据结构
-template<typename T>
-class GPUReadyQueue {
-    moodycamel::ConcurrentQueue<T> cpu_side_;
-    std::atomic<bool> gpu_processing_{false};
-    
-public:
-    void enqueue_batch(gsl::span<const T> items) {
-        // 零拷贝或批量传输优化
-    }
-};
-```
-
 ## 1 重要特性
 - 内存模型和原子操作（用于无锁编程）
 
