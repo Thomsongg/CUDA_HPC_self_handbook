@@ -26,47 +26,49 @@ __global__ void gemm_shared(float *A, float *B, float *C)
     int ty = threadIdx.y;
     int tx = threadIdx.x;
 
-    // 当前线程块控制的矩阵A的行、矩阵B的列位置
     int A_row = blockIdx.y * BLOCK_SIZE + ty;
     int B_col = blockIdx.x * BLOCK_SIZE + tx;
 
     float sum = 0.0f;
 
-    if (A_row >= M || B_col >= N)
-    {
-        return;
-    }
-
-    // 基本思想：k分割
     for (int t = 0; t < (K + BLOCK_SIZE - 1) / BLOCK_SIZE; t++)
     {
-        // 将矩阵A分割为小份，转移到共享内存As
         int A_col = t * BLOCK_SIZE + tx;
-        if (A_col <= K)
+        int B_row = t * BLOCK_SIZE + ty;
+
+        // 以防止读取 A 越界
+        if (A_row < M && A_col < K)
         {
             As[ty][tx] = A[A_row * K + A_col];
         }
-
-        // 转移矩阵B到Bs
-        int B_row = t * BLOCK_SIZE + ty;
-        if (B_row <= K)
+        else
         {
-            Bs[ty][tx] = B[B_row * K + B_col];
+            As[ty][tx] = 0.0f;
         }
-
+        if (B_row < K && B_col < N)
+        {
+            Bs[ty][tx] = B[B_row * N + B_col];
+        }
+        else
+        {
+            Bs[ty][tx] = 0.0f; // 越界补0
+        }
+            
         __syncthreads();
 
-        // 计算Cs一个元素的点积
         for (int k = 0; k < BLOCK_SIZE; k++)
         {
             sum += As[ty][k] * Bs[k][tx];
         }
-
+        
         __syncthreads();
     }
 
-    // 输出当前线程计算结果
-    C[A_row * M + B_col] = sum;
+    // 修正1：索引计算改为 N，并增加越界保护
+    if (A_row < M && B_col < N)
+    {
+        C[A_row * N + B_col] = sum; 
+    }
 }
 
 int main()
@@ -113,7 +115,7 @@ int main()
 
     // 调用核函数
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 gridSize(CEIL(M * K, BLOCK_SIZE), CEIL(K * N, BLOCK_SIZE));
+    dim3 gridSize(CEIL(N, BLOCK_SIZE), CEIL(M, BLOCK_SIZE));
     gemm_shared<M, K, N, BLOCK_SIZE><<<gridSize, blockSize>>>(d_A, d_B, d_C);
 
     // 从GPU转移数据到CPU
