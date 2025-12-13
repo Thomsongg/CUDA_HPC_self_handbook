@@ -1,160 +1,266 @@
 # CUDA C++学习笔记
 
-本文档主要以个人的学习笔记、心得体会为主，聚焦以下几个方面：
+本文档聚焦于 CUDA C++ 开发，内容涉及以下几个方面：
 
-* GPU硬件架构，SM和SP，与CPU架构的不同
-* CUDA抽象硬件层，线程、Warp、线程块、网格之间的关系，SIMT机制
-* CUDA编程实战，经典案例与算子，Nsight Compute性能分析
-* AI Infra基础知识，分布式存储
-* *AI大模型基础*
+* CUDA 基础，含 CUDA 基本框架、常用 API 和基本操作，方便新人快速上手。
+* CUDA Stream 流式模型与并发，学习 CUDA 框架下 GPU 并发模式，涉及 CPU 固定内存的异步传输、Stream 的事件同步、 Stream 流间依赖、计算与内存传输重叠式执行。
+* CUDA 编程实战，通过经典案例与算子，逐步掌握 CUDA C++ 基本开发原理及内存模型，并深入了解 CUDA 硬件级问题（如 Warp Divergence, Bank Conflict）的原理及优化方法。
+* CUDA 性能分析，学习使用 CUDA 官方性能分析工具 Nsight Compute 软件和指令集，通过各项指标（如 Occupancy, Throughput）和模型（如 Roofline Model），定向分析 GPU 运行缺陷，针对性优化。
+* Thrust 并行库，学习 CUDA 官方开源的 Thrust 并行算法库，掌握基本用法，通过定制化的数据结构（如 device_vector 和 iterator）和算法（如 reduce, sort），快速实现并行计算
 
-## 1 引言
+## 1 CUDA基础知识
 
-## 2 GPU硬件架构
-
-## 3 CUDA基础知识
-
-### 3.1 CUDA基本框架
+### 1.1 CUDA基本框架
 
 网格 - 线程块 - 线程
 
-### 3.2 CUDA流 & 并发模式
+## 2 CUDA流 & 并发模式
 
-**特点：**
+### 2.1 了解 CUDA Stream
+**CUDA Stream(流)：** CUDA Stream本质是一个在GPU执行的**FIFO的任务队列**。在同一个Stream添加的操作（如Kernel启动、内存拷贝），会按之前添加的的顺序执行。
 
-- 顺序性：同一流中的操作按顺序执行
-- 并发性：不同流中的操作可以并发执行
-- 独立性：不同流之间默认相互独立
+**并发机制：** 不同 Stream 之间的操作，可能并发执行，也可能乱序执行；取决于GPU硬件资源和依赖关系。
 
-**使用场景：**
+**CUDA Stream 的类型：**
+- **默认流：** 未显式创建的 Stream，在不指定显式流执行操作时会在默认流中执行（如调用 Kernel<<<>>>() 或 cudaMemcpy 时，不指定 Stream 参数）
+- **并发流：** 显式创建的 Stream
 
-- 重叠主机代码与设备kernel，异步执行
-- 并发执行多个独立的kernel
-- 流水线处理，同一流按顺序执行，不同流并发执行
-- 多GPU编程
+### 2.2 并发的第一步：异步传输与页锁定内存
+**异步传输的目的：** 默认的内存传输操作 cudaMemcpy()是同步的，会阻塞CPU线程执行，直到完成GPU内存数据拷贝。为了不影响GPU和CPU的运行，我们采用异步传输机制。
 
-**关键步骤：**
+**方法：** 申请页锁定内存 + 异步传输，使用 cudaMemcpyAsync() 实现异步传输。
 
-1. 创建流 cudaStreamCreate(&stream[i])
-2. 等待步骤完成后启动流 cudaStreamWaitEvent(stream[i], process_done, 0)
-3. 同步流 cudaStreamSynchronize(stream[i])
-
-#### 3.2.1 任务依赖与事件同步【基础】
-
-**任务依赖管理：**
-默认情况下，同一流中的操作按顺序执行，不同流中的操作则可能并发执行。但如果没有正确管理依赖关系，可能会出现数据竞争。我们可以使用事件（cudaEvent_t）来同步不同流中的操作。
-
-**事件同步机制：**
-事件是CUDA中用于同步的重要工具。我们可以记录事件到流中，然后等待事件发生。事件可以用于测量时间，也可以用于流之间的同步。
-
-#### 3.2.2 异步执行与多流流水线【进阶】
-
-重要概念：固定内存、内存传输重叠、流式回调函数、资源竞争
-
-###### 固定内存 (pinned memory)
-
-固定内存是一种特殊的CPU内存。它无法被分页并交换到磁盘上，故可以直接由GPU使能DMA直接访问，实现与CPU异步执行数据传输，是实现异步操作的关键。
-
-**特点：**
-
-- 内存分配和释放的成本较高
-- 传输速度高于可分页内存
-- 允许执行并行数据传输
-
-**用法**：
-
-- 分配: cudaMallocHost(&h_pinned, SIZE);
-- 释放: cudaFreeHost(h_pinned);
-
-###### 异步传输 (cudaMemcpyAsync)
-
-异步传输，是指从固定内存传输数据到GPU内存时，与主机操作异步执行，不会阻塞CPU的操作。依赖固定内存，需指定Cuda流。
-
-**特点：**
-
-- 无阻塞式传输：内存数据传输与CPU操作异步执行
-- 硬件支持：异步传输指令，在GPU的DMA引擎排队，等待执行
-- 设备内部并行：异步传输指令与GPU其他操作(传输、执行kernel等)并行执行
-- 绑定固定内存与流：必须通过固定内存实现传输，且需指定Cuda流
-
-**关键步骤：**
-
-1. 分配固定内存和GPU内存
-2. 创建Cuda流: cudaStreamCreate(&stream)
-3. 通过指定流执行异步内存传输: cudaMemcpyAsync(d_data, h_pinned, SIZE, cudaMemcpyHostToDevice, stream)
-4. GPU执行kernel，CPU执行单独操作(异步执行，非阻塞)
-5. 异步传输，从GPU传回固定内存
-
-###### 回调函数 (cudaStreamAddCallback)
-
-Cuda流的回调函数，用于在流进行到特定位置时执行某些特殊操作，如结果和流信息显示、资源管理和性能监控等。写在主机代码中并由主机执行。
-
-**特点：**
-
-- 插入流的特定位置，由主机调用
-- 在流执行所有前置操作后，自动调用
-- 在主机线程中执行，访问主机资源
-
-##### 异步传输的优点
-
-###### 延迟隐藏 (Latency Hiding)
-
-异步传输，可隐藏GPU产生的延迟：
-
-1. 数据传输延迟，被计算任务隐藏
-2. kernel启动延迟，被其他操作隐藏
-
-###### 提高资源利用率 (Occupancy)
-
-无阻塞式工作模式：让GPU计算单元、数据传输单元(DMA引擎)、CPU时刻保持忙碌状态。
-
-###### 更好的响应性 (Response)
-
-CPU工作无阻塞：不影响CPU处理其他任务(尤其是计算和用户输入)，适合交互式处理。
-
-###### 支持复杂工作流 (Work Streams)
-
-通过Cuda流，可搭配任务依赖、事件同步等，实现多流高并发式处理；还可通过回调函数，实现多流运行监控。
-
-通过将计算和内存传输重叠，可以隐藏内存传输延迟。典型的方法是将数据分块，使用多个流，在每个流中依次执行：主机到设备的内存传输、内核执行、设备到主机的内存传输。这样，当其中一个流在执行内核时，另一个流可以进行内存传输。
-
-**步骤：**
-
-* 主机分配固定内存: cudaMallocHost
-* 内存分块(chunk)，每块由一个cuda流控制：
-  * 创建流
-  * 内存异步传输 cudaMemcpyAsync
-  * 流式执行核函数
-  * 【可选】添加回调函数 cudaStreamAddCallback, 继续执行其他核函数
-  * 等待流同步 cudaStreamSynchronize
-* 清理固定内存 cudaFreeHost 和GPU内存
-
-##### 固定内存
-
-固定内存是主机内存的一种，它不会被操作系统分页并交换到磁盘上，因此设备可以直接通过DMA（直接内存访问）访问固定内存，而不需要CPU的参与。
-
-特点：
-
-* 分配和释放成本较高
-* 传输速度比可分页内存快
-* 允许与设备执行并行传输
-
-固定内存的分配 cudaMallocHost：
+**示例：** 
 
 ```cpp
-float* h_pinned;
+// 申请页锁定内存和GPU内存
 cudaMallocHost(&h_pinned, N * sizeof(float));
+cudaMalloc(&d_data, N * sizeof(float));
+
+// 数据初始化
+do_initialization(h_pinned);
+
+// 申请 CUDA Stream
+cudaStream_t streaml
+cudaStreamCreate(&stream);
+
+// 异步传输
+cudaMemcpyAsync(d_data, h_pinned, N * sizeof(float), cudaMemcpyHostToDevice, stream);
+
+// 启动 Kernel, 其中 sharedMem 可设置为 0
+// 调用后立即返回，不影响 CPU 执行，GPU 在未来某个时刻执行
+myKernel<<<gridSize, blockSize, sharedMem, stream>>>(...);
 ```
 
-#### 3.2.3 优先级流管理【进阶】
+**异步传输的核心：** 页锁定内存(Pinned Memory)
+- 为什么使用页锁定内存：GPU 的 DMA 引擎，需要一个稳定的、不会分页且交换到磁盘中的内存，由 CUDA 驱动先从可分页内存中**同步地**拷贝到一个临时的、驱动程序管理的页锁定内存中后，才能发起异步 DMA 传输。
+- 如何使用： cudaHostAlloc() 或 cudaMallocHost() 分配页锁定内存， cudaFreeHost() 来释放
 
-可以创建具有不同优先级的流。高优先级流中的操作可以优先得到调度。使用cudaStreamCreateWithPriority创建优先级流。
+### 2.3 同步机制：如何“等待”
+颗粒度从粗到细：Device 同步 > Stream 同步 > Event 同步
 
-## 4 CUDA编程实战
+1. 设备同步 `cudaDeviceSynchronize():` 阻塞 CPU 线程，直到 GPU 中所有流的所有任务执行完毕。一般用于程序末尾，所有操作完成后使用（不推荐）。
+2. 流同步 `cudaStreamSynchronize():` 阻塞 CPU 线程，直到这个 Stream 的所有任务执行完毕；推荐使用。
+3. 事件同步(Events)
 
-### 4.1 矩阵转置Transpose
+#### 事件机制 cudaEvent
+事件(Events)是实现复杂并发（流间依赖、性能分析）的最重要工具。
 
-#### 4.1.1 朴素解法 naive
+**事件：** 是一个标记，用来插入到 Stream 的任务队列中。当GPU执行到这里时，事件的状态更新为“已完成”。
+
+**用法/API：** 
+声明一个 Event: `cudaEvent_T event;`
+- `cudaEventCreate(&event)`: 创建一个事件
+- `cudaEventDestroy(event)`: 销毁一个事件
+- `cudaEventRecord(event, stream)`: 将事件放入 stream 队尾（与 CPU 异步）；在 stream 队列之前的任务都完成后，再执行这个事件
+- `cudaEventSynchronize(event)`: 事件同步。阻塞 CPU 线程，直到这个 event 被 GPU 触发
+- `cudaStreamWaitEvent(stream2, event)`: 流间依赖（GPU 之间等待，不阻塞 CPU）。让 stream2 等待，直到 stream 中的 event 被触发时，继续执行 stream2 的后续任务。
+- `cudaEventElapsedTime(&milleSeconds(float*), start, stop)`: 计算两个已完成事件 start 和 stop 之间的时间；常用于性能分析。
+
+
+### 2.4 场景示例
+##### 2.4.1 默认流
+代码忽略，在默认流中实现。
+`cudaMalloc -> myKernel<<<gridSize, blockSize>>>(...) -> cudaFree`
+
+**问题：** 
+- GPU 在 数据 HtoD 和 DtoH 都是空闲的
+- CPU 在 HtoD, myKernel 调用 和 DtoH 都是阻塞的
+
+##### 2.4.2 简单的流并发
+创建多个流，每次执行 HtoD -> Kernel -> DtoH 并提交给 Stream
+
+**优点：**
+- 两个任务的流程，会在 GPU 上并发执行，抢占拷贝引擎 (DMA 资源) 和计算资源 (SM)
+- 吞吐量 (Throughput) 大幅提升
+
+代码示例：
+
+```cpp
+// Data 是预先定义的数据结构
+void process_concurrent_tasks(Data* data1, Data* data2) {
+    // 创建两个 Stream
+    cudaStream_t stream1, stream2;
+    cudaStreamCreate(&stream1);
+    cudaStreamCreate(&stream2);
+
+    // 假设已预先分配固定内存 data1->h_in, data1->h_out
+
+    // Task1: 执行 Kernel 并提交到 Stream1
+    cudaMemcpyAsync(data1->d_in, data1->h_in, N * sizeof(float), cudaMemcpyHostToDevice, stream1);
+    myKernel<<<gridSize, blockSize, 0, stream1>>>(...);
+    cudaMemcpyAsync(data1->d_out, data1->h_out, N * sizeof(float), cudaMemcpyDeviceToHost, stream1);
+}
+
+    // Task2: 执行 Kernel 并提交到 Stream2
+    cudaMemcpyAsync(data2->d_in, data2->h_in, N * sizeof(float), cudaMemcpyHostToDevice, stream2);
+    myKernel<<<gridSize, blockSize, 0, stream2>>>(...);
+    cudaMemcpyAsync(data2->d_out, data2->h_out, N * sizeof(float), cudaMemcpyDeviceToHost, stream2);
+
+    // 等待两个流执行完成
+    cudaStreamSynchronize(stream1);
+    cudaStreamSynchronize(stream2);
+
+    // 释放资源
+    cudaStreamDestroy(stream1);
+    cudaStreamDestroy(stream2);
+}
+```
+
+##### 2.4.3 基于事件的流间依赖
+假设有两个 Kernel, 后一个依赖前一个的结果: kernel_A 和 kernel_B, B 要等待 A 完成后再执行；两个 Kernel 分属于不同的 Stream
+
+**基本流程：**
+1. kernel_A完成，输出结果 d_dataA，将事件 eventA_done 放入 streamA 队列
+2. streamB 等待 eventA_done 完成后开始，传入 d_dataA 执行 kernel_b，输出结果 d_dataB 并回传到主机
+3. 等待最后一个流 streamB 完成
+4. 释放资源
+
+代码示例：
+
+```cpp
+void process_with_dependency(Data* data) {
+    cudaStream_t streamA, streamB;
+    cudaStreamCreate(&streamA);
+    cudaStreamCreate(&streamB);
+
+    // 创建 kernel_A 结束事件
+    cudaEvent_T kernelA_done;
+    cudaEventCreate(&kernelA_done);
+
+    // StreamA: 执行 kernel_A, 结果输出到 d_dataA
+    cudaMemcpyAsync(d_dataA, h_dataA, ..., cudaMemcpyHostToDevice, streamA);
+    kernel_A<<<gridSize, blockSize, ..., streamA>>>(d_dataA, ...);
+
+    // 【重要】记录 event 并压入 streamA
+    cudaEventRecord(kernelA_done, streamA);
+
+    // StreamB: 等待 event 完成后开始
+    cudaStreamWaitEvent(streamB, kernelA_done);
+
+    // 执行 kernel_B
+    kernel_A<<<gridSize, blockSize, ..., streamA>>>(d_dataB, d_dataA, ...);
+    cudaMemcpyAsync(h_dataB, d_dataB, ..., cudaMemcpyHostToDevice, streamA);
+
+    // 流同步：只需同步最后一个流
+    cudaStreamSynchronize(streamB);
+
+    // 释放资源
+    cudaEventDestroy(kernelA_done);
+    cudaStreamDestroy(streamA);
+    cudaStreamDestroy(streamB);
+}
+```
+
+##### 2.4.4 实现拷贝与计算的“重叠(Overlap)”
+**思路：** 流水线式处理。将大任务分块 (Chunks)，使用多个流多批次处理，实现 拷贝+计算 重叠
+
+目标：当 GPU 计算第 i 块时，同时拷贝第 i+1 块的数据到 Device, 并拷贝第 i-1 块的结果到 Host
+
+代码如下：
+
+```cpp
+void process_pipelined(float* h_in, float* h_out, int N) {
+    // 用 n 个流处理，将待处理数据分成 n 份
+    const int N_STREAMS = 2;
+    const int CHUNK_SIZE = N / N_STREAMS;
+    size_t chunk_bytes = CHUNK_SIZE * sizeof(float);
+
+    // 将输入输出数据 d_in, d_out 分割成2段，每个流处理一段
+    cudaStream_t streams[N_STREAMS];
+    float* d_in[N_STREAMS];
+    float* d_out[N_STREAMS];
+
+    // 申请固定内存，实现 HtoD 和 DtoH
+    float *h_pinned_in, *h_pinned_out;
+    cudaHostAlloc(&h_pinned_in, N * sizeof(float), cudaHostAllocDefault);
+    cudaHostAlloc(&h_pinned_out, N * sizeof(float), cudaHostAllocDefault);
+
+    // h_in -> h_pinned_in 使用常规 memcpy (CPU)
+    memcpy(h_pinned_in, h_in, N * sizeof(float));
+
+    // 创建 Streams
+    // 每个 stream 管理一个 Chunk 的 GPU 内存
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        cudaStreamCreate(&stream[i]);
+        cudaMalloc(&d_in[i], chunk_bytes);
+        cudaMalloc(&d_out[i], chunk_bytes);
+    }
+
+    // 流水线模式: GPU 计算与 GPU-CPU 双向传输
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        // (1) 获取当前 chunk 的主机内存，等待传输给 GPU 内存
+        float* h_in_chunk = h_pinned_in + i * CHUNK_SIZE;
+        float* h_out_chunk = h_pinned_out + i * CHUNK_SIZE;
+
+        // (2) 获取当前要使用的 stream
+        cudaStream_t stream = streams[i];
+
+        // (3) 执行“计算+传输”任务，实现重叠
+        cudaMemcpyAsync(d_in[i], h_in_chunk, chunk_bytes, cudaMemcpyHostToDevice);
+        meKernel<<<..., stream>>>(d_out[i], d_in[i], CHUNK_SIZE);
+        cudaMemcpyAsync(h_out_chunk, d_out[i], chunk_bytes, cudaMemcpyDeviceToHost);
+    }
+
+    // 等待所有流执行完毕
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        cudaStreamSynchronize(stream);
+    }
+
+    // 释放资源，包括 stream, 全局内存和固定内存
+    for (int i = 0; i < N_STREAMS; i++)
+    {
+        cudaStreamDestroy(streams[i]);
+        cudaFree(d_in[i]);
+        cudaFree(d_out[i]);
+    }
+    cudaFreeHost(h_pinned_in);
+    cudaFreeHost(h_pinned_out);
+}
+```
+
+##### “重叠”的优化版本：有限 stream 的情况
+由于 GPU 资源限制，我们能分配的 streams 是有限的。如果待处理数据量非常庞大，即使分块处理， chunk 数远大于 streams 数，不可能为每一个 chunk 分配一个单独的 stream
+
+**改进思路：** 使用 Grid-Stride Loops 方法 或 Round-Robin (轮询)调度。
+
+## 3 CUDA编程实战
+
+### 3.1 经典 CUDA 并行计算案例
+- 矩阵转置 Transpose
+
+- 归约 Reduction
+
+- 算子 Softmax
+
+- 矩阵乘法 GEMM
+
+#### 3.1.1 矩阵转置Transpose
+
+##### (1) 朴素解法 naive
 
 naive解法简单直接：将矩阵索引直接转置
 
@@ -188,7 +294,7 @@ thread2: 读取 input[(0 * 1024) + 2] = input[2] -> 写入 output[(2 * 1024) + 0
 相邻线程的非连续访问，会严重降低并行计算效率！
 优化思路：使用共享内存，每次进行读取操作(从input转移数据)时，先对数据进行转置，再写入output。这样保证了数据的连续性，**能够同时合并读取和写入操作**！
 
-#### 4.1.2 基于共享内存的GPU解法
+##### (2) 【重要】基于共享内存的GPU解法
 
 采用共享内存，作为数据中转。
 
@@ -228,7 +334,7 @@ thread2: 读取 input[(0 * 1024) + 2] = input[2] -> 存入smem[0][2] -> 取出sm
 // 读取和写入，均为连续操作！！！
 ```
 
-#### 4.1.3 Swizzling 技术
+##### 合并内存访问的重要性
 
 注意下面的代码：
 
@@ -247,7 +353,7 @@ thread2: 读取 input[(0 * 1024) + 2] = input[2] -> 存入smem[0][2] -> 取出sm
 
 基于此，推荐使用Swizzling技术，将矩阵内每个元素通过数学方法映射到新的索引，保证访问的内存是连续的。
 
-##### 4.1.3.1 XOR Swizzling 异或映射
+##### (3) XOR Swizzling 异或映射
 
 原理：通过threadIdx.x ^ threadIdx.y 异或操作，**将连续的线程打散，避免多个线程同时访问一个bank**，可有效避免bank conflict
 
@@ -275,7 +381,7 @@ __global__ void transpose_xor_swizzling(float *input, float *output, int M, int 
 }
 ```
 
-##### 4.1.3.2 XOR Swizzling 异或映射
+##### (4) 互质因子 Swizzling
 
 原理：选择一个与BLOCK_SIZE互质的因子 SWIZZLE_FACTOR, a * FACTOR + b 会形成**完全映射**，即与 BLOCK_SIZE 交错。
 
@@ -286,20 +392,22 @@ __global__ void transpose_xor_swizzling(float *input, float *output, int M, int 
 ```cpp
 存入时: smem[ty][tx] = input[idy * N + idx];
 ```
-## 5 Thrust并行库
+
 ```cpp
 取出时: output[idx * M + idy] = smem[ty'][tx']
 ```
 
-##### 4.1.3.3 其他Swizzling 映射
+### 3.2 基于 CUDA Stream 实现高效并行计算
+待补充
 
+## 4 Thrust并行库
 Thrust是CUDA自带的开源库，可以简化地实现大数据并行算法。适合处理大数据中的每个元素都执行相同的操作（即大数据并行）。
 **特点：**
 1. 高层次抽象：无需了解GPU底层原理，只需调用对应的接口(如thrust::reduce)，即实现并行算法；会自动且隐式地完成线程分配、内存申请与释放、kernel调用等底层操作。
 2. 高性能：Thrust库的算法函数在后端完成了优化，会自动根据GPU架构和数据类型，智能选择对应的算法
 3. 高操作性：可以自由嵌入Kernel函数和cuBLAs等库函数。
 
-### 5.1 容器
+### 4.1 容器
 常用容器：
 1. 主机vector
 2. 设备vector
@@ -330,7 +438,7 @@ thrust::cuda::vector<int> pinned_vec(100);
 8. 预分配内存 `d_vec.reserve(1000)`
 9. 获取容量 `size_t cap = d_vec.capacity()`
 
-### 5.2 迭代器
+### 4.2 迭代器
 生成一组值的序列
 Thrust迭代器的种类：
 1. 常值迭代器 constant_iterator
@@ -358,8 +466,8 @@ auto transform_iter = thrust::make_transform_iterator(vec.begin(), [] __device__
 auto zipped = thrust::make_zip_iterator(thrust::make_tuple(vec1.begin(), vec2.begin()));
 ```
 
-### 5.3 应用场景 & 基本算法
-#### 5.3.1 数据预处理
+### 4.3 应用场景 & 基本算法
+#### 4.3.1 数据预处理
 1. 排序(Sorting)：快速排序, thrust::sort
 2. 过滤(Filtering)：筛选符合特定条件的元素, thrust::copy_if
 3. 去重(Unique)：移除重复元素, 有 thrust::unique 和 thrust::unique_copy 两种常用操作。
@@ -380,15 +488,15 @@ thrust::device_vector<int> d_vec = h_vec;
 auto unique_end = thrust::unique(d_vec.begin(), d_vec.end())
 ```
 
-#### 5.3.2 数据分析与计算
+#### 4.3.2 数据分析与计算
 1. 归约：数据归约 `thrust::reduce(vec.begin(), vec.end(), 0, operator), 其中 operator可使用lambda表达式传入，代表要执行的归约操作(求和或最大值)`
 2. 变换：将数据中每个元素x按特定规则变换为y `thrust::transform(vec.begin(), vec.end(), vec_ret.begin(), operator)`
 3. 前缀和：求当前元素之前所有元素的和，分为 inclusive_scan(包含当前元素) 和 exclusive_scan(不包含当前元素) 两种，如 `thrust::inclusive_scan(vec.begin(), vec.end(), vec_ret.begin())`
 
-### 5.4 仿函数(functor) 与 Lambda表达式
+### 4.4 仿函数(functor) 与 Lambda表达式
 部分算法(如 reduce, transform. copy_if)需要谓词(即 operator)，告知其操作逻辑。这里需要传入一个 Handle, 一般由仿函数 或 Lambda表达式 实现。
 
-#### 5.4.1 仿函数(functor)
+#### 4.4.1 仿函数(functor)
 特点：使用结构体(struct) 或 类(class)的对象构造，实现 operator()重载
 要求：必须在 operator() 前加上 `__host__ __device__` 关键字，才能同时被CPU和GPU调用
 
@@ -411,7 +519,7 @@ struct saxpy
 thrust::transform(d_input.begin(), d_input.end(), d_output.begin(), saxpy(2.0f));
 ```
 
-#### 5.4.2 Lambda表达式
+#### 4.4.2 Lambda表达式
 特点：比仿函数更加简洁直观
 要求：必须加上 `__device__` 关键字
 
@@ -535,6 +643,3 @@ using d_vec = thrust::device_vector<T>;
 h_vec<int> h_input = {1, 2, 3, 4, 5};
 d_vec<int> d_input = h_input;
 ```
-
-## 6 AI Infra基础
-未完待续。。。
