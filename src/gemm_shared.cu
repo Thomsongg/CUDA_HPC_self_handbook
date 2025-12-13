@@ -20,8 +20,8 @@
 template<int M, int K, int N, int BLOCK_SIZE>
 __global__ void gemm_shared(float *A, float *B, float *C)
 {
-    __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE];
+    __shared__ float As[BLOCK_SIZE][BLOCK_SIZE + 1];
+    __shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE + 1];
 
     int ty = threadIdx.y;
     int tx = threadIdx.x;
