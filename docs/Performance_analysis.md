@@ -28,7 +28,6 @@
    2. Warp Divergence问题：概念、原因、解决
 5. 内存访问模式： Memory Coalescing(内存合并)
 
-
 ## 学习目标
 
 **重点关注以下几个方面：**
@@ -159,52 +158,60 @@ float C = B * A;
 最核心的指标包含：占用率、吞吐量、延迟、缓存命中率和执行效率
 
 ### 2.1 占用率
+
 **原理：** 活跃Warps数量占SM理论最大Warps数的百分比。占用率过低则可能存在较高的延迟。衡量**硬件资源限制或调度性能**。
 
 **场景：** 高占用率，有利于kernel频繁访问全局内存或执行长延时指令时，隐藏延迟。
 
 **问题：** 占用率低，表明存在资源限制。线程块内占用资源(共享内存和寄存器)过多，导致一个SM无法分配足够的Block。
 
-**优化：** 
+**优化：**
+
 1. 最优化BlockSize
 2. 减少寄存器使用量：可用局部变量代替，并简化复杂表达式
 3. 减少共享内存使用量：优化内存访问模式
 
 ### 2.2 计算吞吐量
+
 **原理：** 代表SM实际计算速度，与理论计算速度比较。衡量是否存在**计算瓶颈**。通常为浮点运算，单位为TFLOP/S
 
 **场景：** 执行复杂数学运算的kernel
 
 **问题：** 计算吞吐量远低于峰值，表明存在严重的延迟。
+
 1. 可能存在Warp Divergence
 2. 计算饱和度低：kernel中存在大量内存访问而非计算的步骤
 
-**优化：** 
+**优化：**
+
 1. 消除Warp Divergence：确保同一Warp内不同线程执行相同的指令
 2. 采用更高效的指令：如指令融合。举例：使用FMA操作，将乘法和加法融合为一条指令计算，增加计算吞吐量
 3. 使用编译器优化：通过编译器优化寄存器分配和指令调度(增加指令级并行性)，实现延迟隐藏。
 
 ### 2.3 内存吞吐量
+
 **原理：** 单位时间内，Kernel从全局内存(或L2/DRAM)实际读写的字节数。衡量Kernel是否存在**带宽限制**。如果实际内存吞吐量远低于理论最大内存带宽，则存在**内存瓶颈**。
 
 **场景：** 计算强度小但数据传输量大的Kernel。如向量加法、数据拷贝等。
 
 **问题**：
+
 1. 主机与设备间的内存传输瓶颈
 2. GPU内存传输瓶颈
-    1. 大量使用全局内存传输：带宽低、传输速率慢
-    2. 内存非合并访问(Non-Coalesced)
+   1. 大量使用全局内存传输：带宽低、传输速率慢
+   2. 内存非合并访问(Non-Coalesced)
 
-**优化：** 
+**优化：**
+
 1. 优化主机-设备间传输：
-    1. 减少主机-设备间的数据传输事务：(1)在设备内存中创建合适的数据结构，由设备代码操作并销毁，减少和主机的数据传输，但需要满足大小和对齐要求；(2)合并多次跨域传输事务为单次大批量传输，性能更优。
-    2. 使用页锁定内存(也称固定内存)：直接使用主机的固定内存，可隐式地实现主机-设备间的数据传输
-    3. 使用统一内存(Unified Memory)：使用单一指针，由CUDA显式且自动在CPU-GPU间传输。
+   1. 减少主机-设备间的数据传输事务：(1)在设备内存中创建合适的数据结构，由设备代码操作并销毁，减少和主机的数据传输，但需要满足大小和对齐要求；(2)合并多次跨域传输事务为单次大批量传输，性能更优。
+   2. 使用页锁定内存(也称固定内存)：直接使用主机的固定内存，可隐式地实现主机-设备间的数据传输
+   3. 使用统一内存(Unified Memory)：使用单一指针，由CUDA显式且自动在CPU-GPU间传输。
 2. 优化GPU内存传输
-    1. 内存合并访问：确保相邻线程读取和写入连续的内存
-    2. 使用共享内存代替全局内存
-    3. **全局内存**的数据，需使用**对齐的数据结构**：防止访问事务被编译为多条交错访问模式的指令(无法实现指令合并)
-    
+   1. 内存合并访问：确保相邻线程读取和写入连续的内存
+   2. 使用共享内存代替全局内存
+   3. **全局内存**的数据，需使用**对齐的数据结构**：防止访问事务被编译为多条交错访问模式的指令(无法实现指令合并)
+
 ```cpp
 struct __align__(8)
 {
@@ -212,7 +219,9 @@ struct __align__(8)
     float y;    // float1, 占1个字节
 }
 ```
+
 或
+
 ```cpp
 struct __align__(16)
 {
@@ -223,20 +232,24 @@ struct __align__(16)
 ```
 
 ### 2.4 延迟
+
 **原理：** 指令发出后，平均等待执行的周期数。延迟高，则可能存在内存等待实际长、活跃Warps数过低或Warp调度不合理、依赖关系复杂等问题。
 
 **问题及优化**： 参考1.1.4 延迟隐藏相关。
 
 ### 2.5 L1/L2 缓存命中率
+
 **缓存命中的含义：** 由于缓存相比全局内存，带宽高、更靠近SM。缓存命中率高，表明数据可以在高速缓存中找到，无需访问较慢的全局内存。
 
 **原理：** 数据在各级缓存命中的频率。也是衡量**数据局部性和复用性**的关键指标。数据经常被复用，则其在缓存中不会被消除。
 
 **问题：** 命中率低，则存在局部性和复用性的问题。
+
 1. 空间局部性差：线程访问的内存地址较分散，无法填满缓存行。
 2. 复用性：数据长时间未被复用，在缓存中被消除或替换，无法命中。
 
 **优化：**
+
 1. 合并内存访问：确保相邻线程访问的内存地址也是连续的。
 2. 使用共享内存：提高数据复用性
 3. 调整L1缓存配置
@@ -245,30 +258,97 @@ struct __align__(16)
 
 ## 3 性能分析
 
-### 3.1 性能分析Sections
+接下来，我们结合 Nsight Compute 工具的分析报告，和 ncu 指令，完成一次完整的性能分析。
+
+### 3.1 总结 Summary
+
+以编者的矩阵乘法 block_tile方法为例，Kernel 命名为 gemm_shared，其 Nsight Compute 性能分析报告如下。
+
+1. 程序概况
+   Summary 显示了程序总体的概况及运行结果。
+
+   - Size: 程序调用的 GrideSize 和 BlockSize, 即Grid 内占用的线程块数、每个块内的线程数
+   - Time: 程序总耗时
+   - Cyclys: 执行周期
+   - GPU: 设备 GPU 型号，编者使用 RTX 4060 Ti
+   - SM Frequency: GPU 的 SM 片的执行频率
+   - Attributes: 硬件特性，如 SM 片数量
+2. Kernel 概况
+   中间的表格，展示了程序调用的每个 Kernel 的概况
+
+   - Estimated Speedup [%]: 预估的运行速度提升空间，由 Nsight Compute 提供的多个优化建议中提升幅度最大值决定
+   - Function Name: Kernel 的名称
+   - Demangled Name: 去掉修饰符的 Kernel 名称，如 `void gemm_shared<1024, 256, 512, 32>(float *, float *, float..`
+   - Duration [us]: Kernel 的运行时间，这里为 272.16 us
+   - Runtime Improvement [us]: 运行时间可以减少多少，即 Estimated SpeedUp(%) * Runtime Improvement(us)
+   - Compute Throughput [%]: 计算吞吐量，代表 SM 片内计算单元的使用率，衡量计算强度大小。
+   - Memory Throughput[%]: 内存吞吐量，代表 GPU 内存带宽的使用率，亨利内存负载大小。
+   - #Registers: SM 片内每个线程使用的寄存器资源量
+
+![](assets/20251214_131820_image.png)
+
+3. 优化建议
+   Nsight Compute 会结合 Kernel 执行情况、硬件资源等因素，给出若干条改进建议。可大致分为以下两类：
+
+   - 网格与启动配置类 (Grid)
+   - 占用率与资源限制类 (Occupancy and Limits)
+   - 内存访问效率类 (Memory Access)
+   - 计算流水线与指令类 (Pipeline and Instruction):
+
+下图为 gemm_shared.cu 性能分析的三条建议。可以明显的看到：
+
+- 问题点：存在的问题，由蓝色字体显示，如 Shared Store Bank Conflicts
+- Est. Speedup 理论速度提升百分比
+- 问题详情：在问题点名称右侧，详细介绍了存在的问题和产生机理。
+- Key Performance Indicators: 关键性能指标。涉及此条问题点的关键指标，包括 Metric Name (指标名称)、Value (指标值)、Guidance (优化建议)。
+
+![](assets/20251214_140142_image.png)
+
+### 3.2 性能分析 Profiling Sections
+
+我们结合 Ncu 命令与 Nsight Compute 工具生成的分析报告，其性能分析栏大致相同。
+
 性能分析时，重点关注以下Sections:
-1. Compute Workload Analysis(SM计算负载分析)
-2. Instruction Statistics(汇编指令统计)
-3. Launch Statistics(内核启动统计)
-4. Memory Workload Analysis(GPU内存负载分析)
-5. Occupancy(SMs占用率)
-6. Schedular Statistics(Warp调度器统计)
-7. GPU Speed Of Light Throughput(GPU吞吐量)
-8. Warp State Statistics(Warp状态统计)
 
-#### 3.1.1 Compute Workload Analysis
+1. GPU Speed Of Light Throughput (GPU 吞吐量)
+2. Compute Workload Analysis (SM 计算负载分析)
+3. Memory Workload Analysis (GPU 内存负载分析)
+4. Warp State Statistics (Warp状态统计)
+5. Occupancy (SM 内部资源占用率)
+6. Schedular Statistics (Warp 调度器统计)
+7. Launch Statistics (内核启动统计)
 
-#### 3.1.2 Instruction Statistics
+#### 3.2.1 宏观诊断 - GPU Speed Of Light Throughput
 
-### 3.2 性能分析模型
+最宏观的指标，也是应该第一个检查的内容。
+
+通过各项指标和 Roofline Model, 确定问题的大致方向，是计算/内存瓶颈。
+
+![](assets/20251214_165505_image.png)
+
+**关键指标：**
+
+1. Memory Throughput: 内存吞吐量。如果与计算吞吐量差异较大 (＞30%)，且内存吞吐量较高 (＞80%)，代表一直在进行内存传输，计算前后 SM 在等待内存数据传输完毕，浪费了大量的时间。
+2. Compute Throughput: 计算吞吐量。如果与内存吞吐量差异较大，且计算吞吐量较高，代表 GPU 计算强度高。
+
+#### 3.2.2 根因定位 - Occupancy & Launch Statics
+
+
+#### 3.2.3 深度剖析 - Memory & Compute Workload Analysis
+
+
+### 3.3 性能分析模型 (Profiling Models)
+
 1. Roofline Charts (屋顶模型)
 2. Memory Chart (内存图表)
 3. Memory Tables
 
 #### 3.2.1 Roofline Charts
+
 **原理：** 通过图线，区分内存瓶颈或计算瓶颈。
 
-**组成**： 
+**组成**：
+
 - X轴：Arithmetic Intensity, 代表**算术强度**，即工作量(每秒浮点运算次数)与内存传输量(每秒字节数)的比值；单位FLOP/byte
 - Y轴：Performance, **每秒浮点运算次数(FLOP/s)**
 - 交点：Ridge Point, 是**内存带宽边界**和**峰值性能边界**的交汇点。
@@ -278,6 +358,67 @@ struct __align__(16)
 
 ## 4 问题定位
 
-### 4.1 Warp Divergence
+### 4.1 网格与启动配置类 (Grid)
 
-### 4.2 Bank Conflict
+**原理**: 整个 CPU 的“宏观并发”，即优化网格尺寸，调整 GridSize 和 BlockSize, 使尽可能多的 SM 片参与计算。
+
+#### 4.1.1 Tail Effect (尾部效应)
+
+
+#### 4.1.2 Grid Size Too Small (网格尺寸过小)
+
+
+#### 4.1.3 Inefficient Block Size （低效的线程块尺寸）
+
+
+### 4.2 占用率与资源限制类 (Occupancy and Limits)
+
+**原理**：SM 片内的“微观并发”，最大化片内同时运行的 Warps 数量，提高占用率，并相应提升**延迟隐藏** (Latency Hiding) 能力。
+
+#### (1) Low Theoretical Occupancy - Register Limited
+
+**问题机理：** 寄存器限制导致的 SM 理论占用率偏低。Warp 内每个线程占用的寄存器资源过多，导致 SM 可驻留的 Blocks/Warps 过少。
+
+
+#### (2) Low Theoretical Occupancy - Shared Memory Limited
+
+**问题机理：** 共享内存限制导致的理论占用率偏低。每个线程块内申请的共享内存空间过大，总申请空间超过了 SM 内可用的共享内存。
+
+
+#### (3) Block / Warp Limit
+
+**问题机理：** 受 GPU 硬件限制的最大 blocks 和 warps 数量。
+
+
+### 4.3 内存访问效率类 (Memory Access)
+
+**原理**：内存带宽。
+
+#### (1) Uncoalesced Global Access
+
+**机理：** 全局内存未合并。Warp 内的 32 个线程访问的全局内存地址不是连续的，导致单次的内存访问事务被拆分成多次，造成带宽浪费。
+
+#### (2) Shared Store Bank Confilict
+
+**机理：** 共享内存的 Bank 冲突。Warp 内的多个线程，同时访问了同一个 bank (不同地址)，导致访问串行化。
+
+#### (3) Low L1/L2 Cache Hit
+
+**机理：** L1/L2 缓存命中率低。表面数据复用性差，经常穿过缓存去访问全局内存，传输效率低。
+
+
+### 4.4 计算流水线与指令类 (Pipeline and Instruction)
+
+**原理：** GPU 的计算能力。关注指令的执行是否高效，是否存在逻辑上的浪费。
+
+#### (1) FP32 Non-Fused Instructions (非融合指令)
+
+**机理：** 线程计算中使用了**分离的乘法和加法**，而没有使用融合加乘 `FMA`，导致吞吐量降低。
+
+#### (2) Warp Divergence
+
+**机理：** 经典问题 **Warp 发散**。同一 Warp 内的线程因为 `if-else` 分支，必须串行执行不同的逻辑，降低了硬件占用率。
+
+#### (3) Stall_Sync (同步停顿)
+
+**机理：** L线程同步 `__syncthreads()` 等待时间过长。
