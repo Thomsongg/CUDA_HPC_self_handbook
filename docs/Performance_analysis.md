@@ -396,15 +396,41 @@ struct __align__(16)
 
 #### (1) Low Theoretical Occupancy - Register Limited
 
-**问题机理：** 寄存器限制导致的 SM 理论占用率偏低。Warp 内每个线程占用的寄存器资源过多，导致 SM 可驻留的 Blocks/Warps 过少。
+**机理：** 寄存器限制导致的 SM 理论占用率偏低。
+- Warp 内每个线程占用的寄存器资源过多，导致 SM 可驻留的 Blocks/Warps 过少。
+- `Achieved Blocks (实际驻留块数) <= Block Limit Registers (寄存器限制的块数) ≈ Register File (SM 内寄存器大小) / Registers Per Thread (每个线程占用的寄存器资源)`
+
+**优化：** 减少寄存器压力
+- 使用 `__launch_bounds__` 强制限制核函数使用的寄存器数量。超过线程限制时，核函数不会启动。
+
+```cpp
+// 使用 __launch_bounds__ 修饰
+// maxThreadsPerBlock 为必选项，设置块内最大线程数
+__global__ void __launch_bounds__(int maxThreadsPerBlock, int minBlocksPerMultiprocessor, int maxBlocksPerCluster)
+MyKernel(...)
+{
+    ...
+}
+```
+- 减少核函数内局部变量的使用，每个线程占用更少的寄存器
+- 将部分寄存器内的数据，溢出到 Shared Memory
 
 #### (2) Low Theoretical Occupancy - Shared Memory Limited
 
-**问题机理：** 共享内存限制导致的理论占用率偏低。每个线程块内申请的共享内存空间过大，总申请空间超过了 SM 内可用的共享内存。
+**机理：** 共享内存限制导致的理论占用率偏低。
+- 每个线程块内申请的共享内存空间过大，总申请空间超过了 SM 内可用的共享内存。
+
+**优化：** 优化共享内存空间使用。
+- 减小 Shared Memory 数组大小
+- 改用 __half (FP16) 或 int8 存储数据，节省空间
+- 调整 BlockSize, 平衡 Shared Memory 空间大小与 Occupancy。适当增大 BlockSize, 增加块内 Warps 数
 
 #### (3) Block / Warp Limit
 
-**问题机理：** 受 GPU 硬件限制的最大 blocks 和 warps 数量。
+**机理：** 受 GPU 硬件限制的最大 blocks 和 warps 数量。
+
+**优化：** 调整 Block 配置
+- 如果受 Block 限制，可适当增加 BlockSize, 在不增加片内 Blocks 数的情况下，增加线程数
 
 ### 4.3 内存访问效率类 (Memory Access)
 
@@ -414,9 +440,15 @@ struct __align__(16)
 
 **机理：** 全局内存未合并。Warp 内的 32 个线程访问的全局内存地址不是连续的，导致单次的内存访问事务被拆分成多次，造成带宽浪费。
 
+**优化：** 如下，同 “低缓存命中率”。
+
 #### (2) Shared Store Bank Confilict
 
 **机理：** 共享内存的 Bank 冲突。Warp 内的多个线程，同时访问了同一个 bank (不同地址)，导致访问串行化。
+
+**优化：** 消除 Bank 冲突
+- 填充 Padding: 在共享内存列方向多加一列，如 `__shared__ smem[32][33];`
+- 改变索引映射逻辑 Swizzling
 
 #### (3) Low L1/L2 Cache Hit
 
@@ -474,12 +506,37 @@ struct __align__(16)
 ###### 二、采用分块技术 Tiling (提升 L2 命中率)
 
 - **共享内存分块：** 
+	- 不要让所有线程直接遍历全局内存中的数据矩阵
+    - 将大矩阵拆分成小块（如 32x32），搬运到 Shared Memory
+    - 线程在 Shared Memory 上反复读写数据。人为创造了“时间局部性”
 
 - **寄存器分块：**
+	- 继续对 Shared Memory 中的数据拆分成更小的块（如 4x4），搬运到 Register File
+    - 在 Register File 中反复读写，并完成计算，最后将其输出到全局内存
+    - 获得更好的传输带宽和缓存命中率
 
 ###### 三、调整缓存配置 (更好地平衡 L1/Shared Mem)
 
+- **Carveout 设置：**
+	- 部分 GPU 架构，支持 L1 缓存与 Shared Memory 共享硬件资源
+    - 可使用 API: cudaFuncSetCacheConfig 分配更多资源给 L1 缓存。配置项选择 cudaFuncCachePreferL1
+    
+![](./images/1765850063914_image.png) 
+
 ###### 四、优化数据布局 (提升空间局部性)
+
+- **AoS 转 SoA：**
+	- 从 AoS (结构体数组) 改为 SoA (数组结构体)，实现数据紧凑排列。
+    - Warp 内相邻线程即可实现合并访问 (Coalesced Access)，无需跨步访问 (步长 stride = 结构体实例的预留内存 instance\[i])。
+
+- **Z-order Curve (Morton Code)：**
+	- 对于图像处理的 2D/3D 数据，重新排列数据在内存中的存储顺序，使在 2D 空间相邻的点，在 1D 内存地址上也尽可能相邻。
+
+#### (4) Inefficient Memory Access Pattern (Store)
+
+**机理：** 低效的内存写入。通常是全局内存写入未合并。
+
+**优化：** 同 “内存非合并访问 (Uncoalesced Access)”。
 
 ### 4.4 计算流水线与指令类 (Pipeline and Instruction)
 
