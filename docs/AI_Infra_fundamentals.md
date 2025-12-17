@@ -198,6 +198,9 @@
 
     这正是你可以展现专业性的地方。你可以聚焦在图中**蓝色**和**粉色**高亮的模块，它们是算子优化的重点区域。
 
+    <img width="561" height="138" alt="image" src="https://github.com/user-attachments/assets/38707b4a-8095-403c-a240-45bce5641c2f" />
+
+
     1.  **Multi-Head Attention (MHA) - 优化的核心战场**
         *   **瓶颈**：在Decoding阶段（图中的`H1`模块），Attention的计算 `(Q * K^T) * V` 变成了一个特殊的GEMM。其中，Q是一个极瘦的矩阵（代表新Token），而K和V是两个极胖的矩阵（代表整个历史对话的KV Cache）。这被称为**GEMV (Matrix-Vector Multiplication)** 或者说是一种极端的Batched GEMM。它的效率极低，因为大部分时间都花在读取巨大的K和V矩阵上了。
         *   **你的切入点 (算子融合)**：
