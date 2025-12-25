@@ -318,3 +318,26 @@ __device__ float simulate_fp8_mul(float a, float b, float scale_a, float scale_b
 3.  **FP8** 只要记住 `Value = Int8 * Scale` 这个公式。
 
 早点休息，明天你只需要展示出那两个月自学的**深度**，而不是广度。你完全没问题的！加油！
+
+可以量化的三个关键要素：模型泉州、模型激活、KV缓存
+
+数据降维：从高精度 FP32/FP16 -> 低精度 FP8
+
+主流精度格式：待补充
+FP32、FP16、BF16、FP8(E4M3 推理和前向传播)、FP8(E5M2 梯度计算和反向传播)
+
+### 数据降维的优势：
+1. 性能翻倍：充分利用 Tensor Core 的特性，使计算吞吐量提升尽2倍，显著加速训练和推理
+2. 内存减半：模型权重显存占用直接减半，对于参数维度为百亿、千亿的大模型尤为重要
+3. 通信开销小：分布式训练中，传输 FP8 的梯度和激活值可以减少网络带宽压力
+
+### 降维的挑战
+1. 数值稳定性：数据范围和精度有限，强行转换会导致精度丢失或累加误差。
+2. 缩放策略复杂：需要引入缩放因子，避免数值溢出或精度损失。如何确认缩放因子是关键挑战
+3. 硬件与生态依赖：
+
+[《FP8 训练的挑战及最佳实践》](https://developer.nvidia.cn/blog/fp8-challenges-best-practices/)
+
+[《模型量化：核心概念、实现方法与关键作用》](https://developer.nvidia.cn/blog/model-quantization-concepts-methods-and-why-it-matters/)
+
+[《量化 KV 缓存》—— vLLM用户指南](https://docs.vllm.com.cn/en/latest/features/quantization/quantized_kvcache.html#current-limitations)
